@@ -1,0 +1,9 @@
+node_modules/
+**/*.crt
+**/*.key
+**/*.pem
+**/*.p12
+**/*.bak
+**/*.txt
+**/*.log
+/pki/roots/*.0

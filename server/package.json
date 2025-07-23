@@ -1,0 +1,28 @@
+{
+  "dependencies": {
+    "axios": "^1.10.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.1",
+    "multer": "^2.0.2",
+    "node-forge": "^1.3.1",
+    "nodemailer": "^7.0.5",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1",
+    "speakeasy": "^2.0.0",
+    "winston": "^3.17.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js --ignore videos/"
+  },
+  "devDependencies": {
+    "depcheck": "^1.4.7",
+    "eslint": "^9.30.1",
+    "eslint-plugin-unused-imports": "^4.1.4",
+    "nodemon": "^3.1.7"
+  }
+}

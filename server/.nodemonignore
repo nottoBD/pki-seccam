@@ -1,0 +1,9 @@
+videos/
+node_modules/
+.git
+coverage
+dist
+*.md
+certs/
+.env
+test/

@@ -1,0 +1,206 @@
+volumes:
+  mongodb_data:
+  stepca-data:
+    external: true
+
+
+services:
+
+  nginx:
+    ports: [ "3443:443" ]
+    image: nginx:1.29-alpine
+    container_name: nginx
+    restart: unless-stopped
+    volumes:
+      # reverse‑proxy
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/snippets/upstream_headers.conf:/etc/nginx/snippets/upstream_headers.conf:ro
+      # browser cert/key
+      - ./pki/leafs/server/fullchain.crt:/etc/ssl/certs/ssl-chain.pem:ro
+      - ./pki/leafs/server/server.key:/etc/ssl/private/ssl-privatekey.pem:ro
+      #  nginx for every upstream cert/key
+      - ./pki/leafs/client/fullchain.crt:/etc/ssl/certs/client.fullchain.crt:ro
+      - ./pki/leafs/client/client.key:/etc/ssl/private/client.key:ro
+      #  root CA
+      - ./pki/roots/step-root.pem:/etc/ssl/certs/step-root.pem:ro
+      # pinned leafs (facultative cfr nginx.conf)
+      - ./nginx/pins/server.crt:/etc/ssl/pins/server.crt:ro
+      - ./nginx/pins/client.crt:/etc/ssl/pins/client.crt:ro
+      - ./nginx/pins/mailpit.crt:/etc/ssl/pins/mailpit.crt:ro
+    depends_on:
+      client:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    networks:
+      - secnet
+
+  client:
+    expose: [ "3443" ]
+    build:
+      context: ./client
+      dockerfile: ./Dockerfile
+      args:
+        NEXT_PUBLIC_API_ORIGIN: ${NEXT_PUBLIC_API_ORIGIN}
+        NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT: ${NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT}
+    image: seccam-client
+    container_name: client
+    working_dir: /app/client
+    command: npm run dev
+    volumes:
+      - ./pki/leafs/client/fullchain.crt:/tls/server.crt:ro
+      - ./pki/leafs/client/client.key:/tls/server.key:ro
+      - ./pki/leafs/client:/pki:rw
+      - stepca-data:/ca:ro
+    environment:
+      NODE_ENV: development
+      NODE_EXTRA_CA_CERTS: /ca/certs/root_ca.crt
+      TLS_CERT_PATH: /tls/server.crt
+      TLS_KEY_PATH: /tls/server.key
+      NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT: ${NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT}
+    depends_on:
+      - server
+    networks:
+      - secnet
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:3443/ || exit 1" ]
+      interval: 10s
+      retries: 10
+      start_period: 90s
+
+  server:
+    expose: [ "8888" ]
+    build:
+      context: ./server
+      dockerfile: ./Dockerfile
+    image: seccam-server
+    container_name: server
+    working_dir: /app/server
+    command: npm run start
+    volumes:
+      - ./pki/leafs/server/fullchain.crt:/tls/server.crt:ro
+      - ./pki/leafs/server/server.key:/tls/server.key:ro
+      - ./pki/leafs/server:/pki:rw
+      - stepca-data:/ca:ro
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca/certs/root_ca.crt
+      TLS_CERT_PATH: /tls/server.crt
+      TLS_KEY_PATH: /tls/server.key
+      LOGGER_SECRET: ${LOGGER_SECRET}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      DB_URL: ${DB_URL}
+      TOTP_KEY: ${TOTP_KEY}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      step-ca:
+        condition: service_healthy
+    networks:
+      - secnet
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:8888/ || exit 1" ]
+      interval: 10s
+      retries: 10
+      start_period: 50s
+
+
+  mongodb:
+    image: mongo:8.0.11
+    container_name: mongodb
+    expose: [ "27017" ]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    healthcheck:
+      test: [ "CMD-SHELL",
+              "mongosh --quiet -u $${MONGO_INITDB_ROOT_USERNAME} -p $${MONGO_INITDB_ROOT_PASSWORD} --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 })'" ]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - mongodb_data:/data/db
+    command: [ "mongod", "--auth" ]
+    networks:
+      - secnet
+
+  step-ca:
+    expose: [ "9000", "9001" ]
+    image: smallstep/step-ca:0.28.3
+    container_name: step-ca
+    restart: unless-stopped
+    environment:
+      STEP_CA_PASSWORD_FILE: /home/step/secrets/password
+      STEPDEBUG: "0"
+    volumes:
+      - stepca-data:/home/step
+    healthcheck:
+      test: [ "CMD", "step", "ca", "health", "--ca-url", "https://step-ca:9000", "--root", "/home/step/certs/root_ca.crt" ]
+      interval: 30s
+      retries: 3
+      start_period: 20s
+    networks:
+      - secnet
+
+  mailpit:
+    expose: [ "1025", "3025" ]
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    volumes:
+      - ./pki/leafs/mailpit/fullchain.crt:/tls/server.crt:ro
+      - ./pki/leafs/mailpit/mailpit.key:/tls/server.key:ro
+    environment:
+      MP_SMTP_ADDR: :1025
+      MP_SMTP_TLS_CERT: /tls/server.crt
+      MP_SMTP_TLS_KEY: /tls/server.key
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_UI_BIND_ADDR: :3025
+      MP_UI_TLS_CERT: /tls/server.crt
+      MP_UI_TLS_KEY: /tls/server.key
+      MP_API_CORS: "*"
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+    command:
+      [
+        "--smtp=0.0.0.0:1025",
+        "--smtp-tls-cert=/tls/server.crt",
+        "--smtp-tls-key=/tls/server.key",
+        "--smtp-require-starttls",
+        "--listen=0.0.0.0:3025",
+        "--ui-tls-cert=/tls/server.crt",
+        "--ui-tls-key=/tls/server.key"
+      ]
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:3025/api/v1/messages?limit=1 || exit 1" ]
+      interval: 5s
+      retries: 15
+      start_period: 5s
+    networks:
+      - secnet
+
+  cert-signer:
+    build:
+      context: ./step-ca
+      dockerfile: ./Dockerfile
+    image: seccam-cert-signer
+    container_name: cert-signer
+    restart: unless-stopped
+    environment:
+      STEP_CA_URL: https://step-ca:9000
+      STEP_ROOT: /home/step/certs/root_ca.crt
+      STEP_PROVISIONER: "seccam-provisioner"
+      STEP_PASSWORD_FILE: /home/step/secrets/password
+    volumes:
+      - stepca-data:/home/step:rw
+      - ./pki/leafs:/certs:ro
+    depends_on:
+      - step-ca
+    networks:
+      - secnet
+
+networks:
+  secnet:
+    driver: bridge
