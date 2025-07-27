@@ -14,28 +14,41 @@ import {
     base64ToArrayBuffer,
     decryptWithPrivateKey,
     encryptWithPublicKey,
-    importPrivateKey,
+    getOrCreateUserKeypair,
     importPublicKey,
     verifySignatureWithPublicKey
 } from "@/cryptography/asymmetric";
-import {buildDeviceCSR, buildOrganizationCSR} from './certificate';
-import {getKey} from "@/keys/indexed-keys";
-import {setSessionKeys} from "@/keys/session-keys";
+import {buildOrganizationCSR, buildUserCSR} from './certificate';
+import {getUserKeyPackage, saveUserKeyPackage} from "@/utils/idb-util";
+import {setSessionKeys} from "@/utils/session-util";
 
 const toB64 = async k =>
     btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("raw", k))));
 
-export async function shareKeysWithDevice(deviceId, certPem) {
-
-}
-
 
 export const handleRegistration = async (userData) => {
     try {
-        const {deviceId, csrPem: deviceCsr, publicKeyPem} = await buildDeviceCSR(
-            userData.username,
-            navigator.userAgent
-        );
+        const existingPackage = await getUserKeyPackage(userData.username);
+        if (existingPackage) {
+            throw new Error('Crypto package already exists for this username. Registration aborted to prevent duplicates.');
+        }
+
+        let publicKeyPem;
+        let privateKeyJwk;
+        let trustedUserCsr = null;
+        let certificate = null;
+        const isTrustedUser = !!(userData.fullname && userData.organization);
+
+        if (isTrustedUser) {
+            const result = await buildUserCSR(userData.username, navigator.userAgent);
+            trustedUserCsr = result.csrPem;
+            publicKeyPem = result.publicKeyPem;
+            privateKeyJwk = result.privateJwk;
+        } else {
+            const keypair = await getOrCreateUserKeypair(userData.username);
+            publicKeyPem = keypair.publicKeyPem;
+            privateKeyJwk = keypair.privateJwk;
+        }
 
         const devicePublicKey = await importPublicKey(publicKeyPem, 'encrypt');
 
@@ -57,53 +70,71 @@ export const handleRegistration = async (userData) => {
             hmac_username: await generateMAC(userData.username, hmacKey),
             email: emailBlob,
             hmac_email: email_hmac,
-            deviceId,
             public_key: publicKeyPem,
-            deviceCsr,
             deviceName: navigator.userAgent,
             email_raw: userData.email,
             encrypted_symmetric_key,
             encrypted_hmac_key,
-            isTrustedUser: !!(userData.fullname && userData.organization),
+            isTrustedUser,
         };
-        /* ---- extra fields for trusted users ---- */
-        if (payload.isTrustedUser) {
+
+
+        if (isTrustedUser) {
             const encrypted_fullname = await encryptData(userData.fullname, symmetricKey);
             payload.fullname = JSON.stringify(encrypted_fullname);
             payload.hmac_fullname = await generateMAC(payload.fullname, hmacKey);
             payload.organization = userData.organization.trim();
             payload.country = userData.country.trim();
+            payload.trustedUserCsr = trustedUserCsr;
             payload.orgCsr = await buildOrganizationCSR(
                 userData.fullname, payload.organization, payload.country
             );
         }
-        return {...payload, deviceId};
+
+        await saveUserKeyPackage(userData.username, {
+            privateKeyJwk,
+            publicKeyPem,
+            certificate,
+            symmetricKey: symmetricKeyBase64,
+            hmacKey: hmacKeyBase64
+        });
+
+        return payload;
     } catch (err) {
         console.error(err);
         throw new Error('Registration failed client-side.');
     }
 };
 
-export const handleProfile = async (user_data, onError = (msg) => {
+export const handleProfile = async (user_data, inMemoryPackage = null, onError = (msg) => {
 }) => {
     try {
-        const deviceId = localStorage.getItem("device_id");
-        const imported_private_key = await getKey(deviceId);
-        if (!imported_private_key) {
-            onError("Device private key not found. Register this device.");
-            throw new Error("Private key not found.");
+        let keyPackage = inMemoryPackage;
+
+        if (!keyPackage || !keyPackage.privateKeyJwk) {
+            onError("Crypto package not found or private key malformed.");
+            throw new Error("Crypto package not found.");
         }
+        const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
+        delete privateKeyJwkCopy.alg;
+
+        const privKey = await window.crypto.subtle.importKey(
+            'jwk',
+            privateKeyJwkCopy,
+            {name: 'RSA-OAEP', hash: 'SHA-256'},
+            true,
+            ['decrypt']
+        );
 
         const symmetric_key_base64 = await decryptWithPrivateKey(
             user_data.encrypted_symmetric_key,
-            imported_private_key
+            privKey
         );
         const symmetric_key = await importKey(base64ToArrayBuffer(symmetric_key_base64));
 
-
         const hmac_key_base64 = await decryptWithPrivateKey(
             user_data.encrypted_hmac_key,
-            imported_private_key
+            privKey
         );
         const hmac_key = await importHmacKey(base64ToArrayBuffer(hmac_key_base64));
 
@@ -118,12 +149,12 @@ export const handleProfile = async (user_data, onError = (msg) => {
         };
     } catch (error) {
         console.error("Decryption error:", error);
-        onError('Unable to decrypt data. Register this device.');
+        onError('Unable to decrypt data. Import your crypto package.');
         throw Error('Unable to decrypt data.');
     }
 };
 
-export const handleProfileTrusted = async (user_data) => {
+export const handleProfileTrusted = async (user_data, orgKey = null) => {
     try {
         const {
             username,
@@ -143,27 +174,34 @@ export const handleProfileTrusted = async (user_data) => {
             signature_hmac_key,
         } = user_data;
 
-        //pubkey locally
-        let pub = localStorage.getItem(`${username}_public_key`);
-        if (!pub && pkFromServer) {
-            pub = pkFromServer;
-            localStorage.setItem(`${username}_public_key`, pub);
+        if (!orgKey) {
+            throw new Error("Organization key missing for trusted user.");
         }
+        const orgPackage = await getOrgKeyPair(orgKey);
+        if (!orgPackage || !orgPackage.jwk || !orgPackage.publicPem) {
+            throw new Error('Organization key-pair missing in crypto package. Import org package.');
+        }
+        const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
+        delete privateKeyJwkCopy.alg;
+        delete privateKeyJwkCopy.key_ops;
 
-        const priv = localStorage.getItem(`${username}_private_key`);
-        if (!pub || !priv) throw new Error('Missing user key-pair in browser');
+        const pubKey = await importPublicKey(orgPackage.publicPem, 'verify');
+        const privKey = await window.crypto.subtle.importKey(
+            'jwk',
+            privateKeyJwkCopy,
+            {name: 'RSA-OAEP', hash: 'SHA-256'},
+            true,
+            ['decrypt']
+        );
 
-        const pubKey = await importPublicKey(pub, 'verify');
-        const privKey = await importPrivateKey(priv, 'decrypt');
-
-
+        // Signature verification on encrypted keys
         const sigOK_sym = await verifySignatureWithPublicKey(
             encrypted_symmetric_key, signature_symmetric_key, pubKey);
         const sigOK_hmac = await verifySignatureWithPublicKey(
             encrypted_hmac_key, signature_hmac_key, pubKey);
         if (!sigOK_sym || !sigOK_hmac) throw new Error('Wrapped key signature mismatch');
 
-
+        // Decrypt keys
         const symKey = await importKey(
             base64ToArrayBuffer(
                 await decryptWithPrivateKey(encrypted_symmetric_key, privKey)
@@ -173,19 +211,19 @@ export const handleProfileTrusted = async (user_data) => {
                 await decryptWithPrivateKey(encrypted_hmac_key, privKey)
             ));
 
-
+        // MAC checks
         const macOK_user = await verifyMAC(username, hmac_username, hmacKey);
         const macOK_email = await verifyMAC(encrypted_email, hmac_email, hmacKey);
         const macOK_name = await verifyMAC(encrypted_fullname, hmac_fullname, hmacKey);
         if (!macOK_user || !macOK_email || !macOK_name)
             throw new Error('Core PII integrity check failed');
 
+        // Decrypt user data
         const emailObj = JSON.parse(encrypted_email);
         const fullnameObj = JSON.parse(encrypted_fullname);
 
         const decrypted_email = await decryptData(emailObj, symKey);
         const decrypted_fullname = await decryptData(fullnameObj, symKey);
-
 
         let decrypted_org = '';
         let decrypted_country = '';
@@ -204,8 +242,11 @@ export const handleProfileTrusted = async (user_data) => {
             }
         }
 
-        setSessionKeys(await toB64(symKey), await toB64(hmacKey));
-
+        // Store session keys
+        setSessionKeys(
+            btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.exportKey("raw", symKey)))),
+            btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.exportKey("raw", hmacKey))))
+        );
 
         return {
             username,

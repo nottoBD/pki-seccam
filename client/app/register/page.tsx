@@ -1,13 +1,14 @@
 'use client';
 
-import React, {useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {countries} from 'countries-list';
 import {register} from '@/actions/auth';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {useRouter} from "next/navigation";
-import {decryptWithPrivateKey} from "@/cryptography/asymmetric";
-import {getKey} from "@/keys/indexed-keys";
+
+import {getOrgCert, getOrgKeyPair, getUserKeyPackage, saveOrgCert, saveUserKeyPackage} from '@/utils/idb-util';
+import {encryptCryptoPassportRegistration} from "@/cryptography/symmetric";
 
 const USERNAME_REGEX = /^[A-Za-z0-9_.]{5,16}$/;  // 5–16 chars, letters/digits/._
 const FULLNAME_REGEX = /^[A-Za-zÀ-ÿ' ]{10,64}$/; // 10–64, letters + accents, spaces, '
@@ -30,11 +31,72 @@ const Register = () => {
     const [userErr, setUserErr] = useState('');
     const [fullErr, setFullErr] = useState('');
     const [orgErr, setOrgErr] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const usernameRef = useRef<HTMLInputElement>(null);
+    const passwordRef = useRef<HTMLInputElement>(null);
+
+    const [showExportModal, setShowExportModal] = useState(false);
+    const [password, setPassword] = useState('');
+    const [password2, setPassword2] = useState('');
+    const [packageType, setPackageType] = useState<'user' | 'org' | null>(null);
+    const [orgKeyToExport, setOrgKeyToExport] = useState<string | null>(null);
+
+    const [exportError, setExportError] = useState('');
+    const [exportDone, setExportDone] = useState(false);
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const countryList = Object.entries(countries).map(([code, c]) => ({
         code,
         name: c.name,
     }));
+
+    useEffect(() => {
+        if (usernameRef.current) {
+            usernameRef.current.focus();
+        }
+    }, []);
+
+    const handleExportDownload = async () => {
+        setExportError('');
+        if (!password || password.length < 8) {
+            setExportError("Password must be at least 8 characters.");
+            return;
+        }
+        if (password !== password2) {
+            setExportError("Passwords do not match.");
+            return;
+        }
+        try {
+            if (packageType === 'user') {
+                const pkg = await getUserKeyPackage(username);
+                if (!pkg) throw new Error("No package data found");
+                const blob = await encryptCryptoPassportRegistration(pkg, password);
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `${username}-crypto-package.sec.json`;
+                link.click();
+            }
+            if (packageType === 'org' && orgKeyToExport) {
+                // org key and cert
+                const keyPair = await getOrgKeyPair(orgKeyToExport);
+                const cert = await getOrgCert(orgKeyToExport);
+                if (!keyPair || !cert) throw new Error("No org package found");
+                const orgPkg = {...keyPair, cert};
+                const blob = await encryptCryptoPassportRegistration(orgPkg, password);
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `${orgKeyToExport}-org-package.sec.json`;
+                link.click();
+            }
+            setExportDone(true);
+            setShowExportModal(false);
+            setPassword('');
+            setPassword2('');
+            setPackageType(null);
+        } catch (err: any) {
+            setExportError("Failed to export package: " + err.message);
+        }
+    };
 
     const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value;
@@ -44,58 +106,147 @@ const Register = () => {
 
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        setMessage('');
 
-        if (
-            !username ||
-            !email ||
-            (isTrustedUser && (!fullName || !organization || !country))
-        ) {
-            setMessage('All fields are required.');
+        if (!username || !email || (isTrustedUser && (!fullName || !organization || !country))) {
+            setMessage('All fields required');
+            setIsSubmitting(false);
             return;
         }
-        if (emailError || userErr || fullErr || orgErr) return;
-
-        const payload: any = {
-            username,
-            email,
-        };
-        if (isTrustedUser) {
-            Object.assign(payload, {
-                fullname: fullName,
-                organization,
-                country,
-            });
+        if (emailError || userErr || fullErr || orgErr) {
+            setIsSubmitting(false);
+            return;
         }
+
+        const payload: any = {username, email};
+        if (isTrustedUser) {
+            Object.assign(payload, {fullname: fullName, organization, country});
+        }
+
 
         try {
             const resp: any = await register(payload);
 
-            const {status, data, deviceId} = resp;
-            if (status !== 200) {
-                setMessage('Registration failed');
-                return;
-            }
+            if (resp.status === 200 && resp.data.qrcode_image) {
+                setQrCode(resp.data.qrcode_image);
 
-            if (data.qrcode_image) {
-                setQrCode(data.qrcode_image);
-                if (data.encrypted_secret) {
-                    const privKey = await getKey(deviceId);
-                    if (privKey) {
-                        try {
-                            const decrypted = await decryptWithPrivateKey(data.encrypted_secret, privKey);
-                            setSecret(decrypted);
-                        } catch (e) {
-
-                        }
+                if (resp.data.userCertificate) {
+                    const pkg = await getUserKeyPackage(username);
+                    if (pkg) {
+                        pkg.certificate = resp.data.userCertificate;
+                        await saveUserKeyPackage(username, pkg);
                     }
                 }
+
+                // Save org certificate if returned
+                if (isTrustedUser && resp.data.organizationCertificate && organization && country) {
+                    const orgKey = `${organization.trim()}_${country.trim()}`;
+                    await saveOrgCert(orgKey, resp.data.organizationCertificate);
+
+                }
+                setPackageType('user');
+                setShowExportModal(true);
+
+                if (
+                    isTrustedUser &&
+                    resp.data.organizationCertificate &&
+                    organization && country
+                ) {
+                    setOrgKeyToExport(`${organization.trim()}_${country.trim()}`);
+                } else {
+                    setOrgKeyToExport(null);
+                }
+                setMessage('Registered with great success! Verify your email to login');
+            } else {
+                setMessage(resp.data.message || 'Registration failed..');
             }
-            setMessage(data.message || 'Registration successful!');
         } catch (err: any) {
-            setMessage(err.message || 'An error occurred. Please try again.');
+            setMessage(err.message || 'An error occurred!');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
+    const handleModalDone = () => {
+        if (packageType === 'user' && orgKeyToExport) {
+            setPackageType('org');
+            setShowExportModal(true);
+        } else {
+            setExportDone(true);
+            setPackageType(null);
+            setOrgKeyToExport(null);
+        }
+    };
+
+
+    useEffect(() => {
+        if (showExportModal && passwordRef.current) {
+            passwordRef.current.focus();
+        }
+    }, [showExportModal]);
+
+
+    const exportModal = showExportModal && (
+        <div style={{
+            position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh",
+            background: "rgba(0,0,0,0.4)", zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center"
+        }}>
+            <Window98 title={`Download ${isTrustedUser ? "Privileged" : "User"} Access`} width={450}>
+                <p style={{fontSize: 14, marginTop: 4}}>
+                    Set a strong passphrase to ensure your own access. <br/> <b>No data recoverable if forgotten.</b>
+                </p>
+                <div style={{display: "flex", gap: 16}}>
+                    <div style={{flex: 1}}>
+                        <div className="field-row-stacked" style={{width: "225px", marginBottom: 16}}>
+                            <label htmlFor="password"><b>Password</b></label>
+                            <input
+                                id="password"
+                                type="password"
+                                ref={passwordRef}
+                                placeholder="Password"
+                                value={password}
+                                onChange={e => setPassword(e.target.value)}
+                                minLength={8}
+                                required
+                            />
+                        </div>
+                        <div className="field-row-stacked" style={{width: "225px"}}>
+                            <label htmlFor="password2"><b>Repeat Password</b></label>
+                            <input
+                                id="password2"
+                                type="password"
+                                placeholder="Repeat Password"
+                                value={password2}
+                                onChange={e => setPassword2(e.target.value)}
+                                minLength={8}
+                                required
+                            />
+                        </div>
+                        <button
+                            className="default"
+                            style={{width: "225px", marginBottom: 1, marginTop: 2}}
+                            onClick={handleExportDownload}
+                        ><b>Download</b></button>
+                        {exportError && <p style={{color: "red"}}>{exportError}</p>}
+                    </div>
+                    {qrCode && (
+                        <div style={{display: "flex", alignItems: "center", justifyContent: "center", marginTop: -20}}>
+                            <fieldset>
+                                <legend>TOTP</legend>
+                                <img src={qrCode} alt="QR Code" style={{maxWidth: 130}}/>
+                            </fieldset>
+                        </div>
+                    )}
+                </div>
+                <p style={{color: "#555", fontSize: 14, marginTop: 8}}>
+                    <b><i>Seccam {isTrustedUser ? "Premium" : "User"} Crypto-Passport™</i> at Your Service!</b>
+                </p>
+            </Window98>
+        </div>
+    );
 
     return (
         <>
@@ -108,6 +259,7 @@ const Register = () => {
                             <input
                                 id="username"
                                 value={username}
+                                ref={usernameRef}
                                 onChange={(e) => {
                                     const v = e.target.value.trim();
                                     setUsername(v);
@@ -198,25 +350,18 @@ const Register = () => {
                             className="default"
                             style={{width: "100%", marginTop: 16}}
                             type="submit"
-                            disabled={!!emailError || !!userErr || !!fullErr || !!orgErr}
+                            disabled={isSubmitting || !!emailError || !!userErr || !!fullErr || !!orgErr}
                         >
                             Register
                         </button>
-
-                        {qrCode && (
-                            <fieldset style={{marginTop: 16}}>
-                                <legend>TOTP</legend>
-                                <img src={qrCode} alt="QR Code"/>
-                                {secret && <p>Alternative Password: {secret}</p>}
-                            </fieldset>
-                        )}
                     </form>
                     {message && <p>{message}</p>}
                     <p style={{marginTop: 8}}>
-                        Login instead? <a href="/login">Log in</a>
+                        <a href="/login">Log in</a> instead?
                     </p>
                 </Window98>
             </main>
+            {exportModal}
         </>
     );
 }

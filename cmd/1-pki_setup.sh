@@ -48,7 +48,7 @@ docker run -d --name step-ca \
   -e DOCKER_STEPCA_INIT_KTY="RSA" \
   -e DOCKER_STEPCA_INIT_SIZE="2048" \
   -p 9000-9001:9000-9001 \
-  smallstep/step-ca:0.28.3
+  smallstep/step-ca:0.28.4
 
 # wait for root ca max 20"
 for _ in {1..20}; do
@@ -112,7 +112,6 @@ docker cp step-ca:/home/step/certs/intermediate_ca.crt "$ROOTS_DIR/intermediate_
 ln -sf intermediate_ca.crt "$ROOTS_DIR/$(openssl x509 -noout -hash -in "$ROOTS_DIR/intermediate_ca.crt").0"
 command -v c_rehash >/dev/null 2>&1 && c_rehash "$ROOTS_DIR" || openssl rehash "$ROOTS_DIR"
 
-###############################################################################
 # 6)  Browser client certificate for global mTLS
 ###############################################################################
 USER_ID=$(id -un)
@@ -157,11 +156,6 @@ openssl pkcs12 -export \
 cp "$BROWSER_DIR/${USER_ID}.p12" "$PROJECT_ROOT/${USER_ID}.p12"
 
 
-echo -e "\033[33m🛈  Browser certificate created:"
-echo -e "    • Files in $BROWSER_DIR"
-echo -e "    • Import bundle at $PROJECT_ROOT/${USER_ID}.p12  (password: $P12_PASSWORD)\033[0m"
-
-
 # 7) Copy to host
 ################################################################################
 for name in server client mailpit; do
@@ -170,6 +164,13 @@ for name in server client mailpit; do
   docker cp step-ca:${remote_base}.fullchain.crt "$local_dir/fullchain.crt"
   docker cp step-ca:${remote_base}.key             "$local_dir/${name}.key"
 done
+
+CHAIN="$ROOTS_DIR/clients_ca_chain.pem"
+cat "$ROOTS_DIR/step-root.pem" "$ROOTS_DIR/intermediate_ca.crt" > "$CHAIN"
+
+echo -e "\033[33m🛈  Browser certificate created:"
+echo -e "    • Files in $BROWSER_DIR"
+echo -e "    • Import bundle at $PROJECT_ROOT/${USER_ID}.p12  (password: $P12_PASSWORD)\033[0m"
 
 docker cp step-ca:/home/step/certs/root_ca.crt "$ROOTS_DIR/step-root.pem"
 cp "$ROOTS_DIR/step-root.pem" "$PROJECT_ROOT/step-root.pem"

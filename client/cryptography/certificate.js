@@ -1,5 +1,6 @@
 import forge from 'node-forge';
-import {getOrCreateDeviceKeypair} from './asymmetric';
+import {getOrCreateUserKeypair} from './asymmetric';
+import {saveOrgKeyPair} from "@/utils/idb-util";
 
 
 /* cache successful pins */
@@ -20,30 +21,11 @@ const pinnedFingerprint =
     '';
 
 
-export async function buildDeviceCSR(username, deviceName) {
-    const deviceId = crypto.randomUUID();
-    const {publicKeyPem: encPubPem, privateKey: encPrivKey} =
-        await getOrCreateDeviceKeypair(deviceId);
+export async function buildUserCSR(username, deviceName = 'Web Browser') {
+    const {publicKeyPem, privateKey, privateJwk} = await getOrCreateUserKeypair(username);
 
-    /*TODO: unified pki-based multidevice login/register */
-    const {publicKey: sigPub, privateKey: sigPriv} = await crypto.subtle.generateKey(
-        {
-            name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
-            publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256'
-        },
-        /* extractable */ false,
-        ['sign', 'verify']
-    );
-    localStorage.setItem('device_id', deviceId);
-
-    const spki = await crypto.subtle.exportKey('spki', sigPub);
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(spki)));
-    const sigPublicPem =
-        '-----BEGIN PUBLIC KEY-----\n' +
-        b64.match(/.{1,64}/g).join('\n') +
-        '\n-----END PUBLIC KEY-----';
     const csr = forge.pki.createCertificationRequest();
-    csr.publicKey = forge.pki.publicKeyFromPem(sigPublicPem);
+    csr.publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
     csr.setSubject([
         {name: 'commonName', value: username},
         {name: 'organizationalUnitName', value: safe(deviceName)},
@@ -52,44 +34,42 @@ export async function buildDeviceCSR(username, deviceName) {
     const criAsn1 = forge.pki.getCertificationRequestInfo(csr);
     const criDerStr = forge.asn1.toDer(criAsn1).getBytes();
     const criU8 = Uint8Array.from(criDerStr, ch => ch.charCodeAt(0));
-
+    const digest = await crypto.subtle.digest('SHA-256', criU8);
     const sigU8 = new Uint8Array(
         await crypto.subtle.sign(
-            {name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256'},
-            sigPriv,
-            criU8
+            'RSASSA-PKCS1-v1_5',
+            privateKey,
+            digest
         )
     );
 
-    const sigBin = String.fromCharCode(...sigU8);
     csr.signatureOid = forge.pki.oids.sha256WithRSAEncryption;
-    csr.siginfo = csr.siginfo || {};
-    csr.siginfo.algorithmOid = forge.pki.oids.sha256WithRSAEncryption;
-    csr.signature = sigBin;
+    csr.signature = String.fromCharCode(...sigU8);
 
     const csrPem = forge.pki.certificationRequestToPem(csr);
-    if (typeof window !== 'undefined') {
-        localStorage.setItem('device_id', deviceId);
-    }
 
-    return {deviceId, csrPem, publicKeyPem: encPubPem};
+    return {csrPem, publicKeyPem, privateJwk};
 }
 
 
-export function buildOrganizationCSR(fullname, organization, country) {
-    const {publicKey, privateKey} = forge.pki.rsa.generateKeyPair(2048);
+export async function buildOrganizationCSR(fullname, organization, country) {
+    const orgKey = `${organization.trim()}_${country.trim()}`; // Unique key for org+country
+
+    const {publicKeyPem: pubPem, privPem} = await getOrCreateUserKeypair(orgKey);
+
+    const publicKey = forge.pki.publicKeyFromPem(pubPem);
+    const privateKey = forge.pki.privateKeyFromPem(privPem);
+
+    await saveOrgKeyPair(orgKey, jwk, pubPem);
 
     const csr = forge.pki.createCertificationRequest();
     csr.publicKey = publicKey;
     csr.setSubject([
         {name: 'commonName', value: fullname},
         {name: 'organizationName', value: organization},
-        {name: 'countryName', value: country},
+        {name: 'countryName', value: country}
     ]);
     csr.sign(privateKey, forge.md.sha256.create());
-
-    /* org’s id key locally */
-    localStorage.setItem('org_identity_priv', forge.pki.privateKeyToPem(privateKey));
 
     return forge.pki.certificationRequestToPem(csr);
 }

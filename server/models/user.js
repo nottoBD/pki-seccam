@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const deviceSchema = require('./device');
 
 const userSchema = new mongoose.Schema({
     username: {type: String, unique: true, required: true},
@@ -12,7 +11,6 @@ const userSchema = new mongoose.Schema({
     verification_token_hash: {type: String},
     verification_token_expires: {type: Date},
     secret: {type: String, required: true},// TOTP
-    devices: [deviceSchema],
 });
 
 module.exports = mongoose.model('User', userSchema);

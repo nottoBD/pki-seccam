@@ -1,5 +1,46 @@
 import {arrayBufferToBase64, base64ToArrayBuffer} from './asymmetric';
 
+export async function encryptCryptoPassportRegistration(json, password) {
+    const encoder = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw", encoder.encode(password), "PBKDF2", false, ["deriveKey"]
+    );
+    const key = await crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt,
+            iterations: 250000,
+            hash: "SHA-256"
+        },
+        keyMaterial,
+        {name: "AES-GCM", length: 256},
+        false,
+        ["encrypt"]
+    );
+    const data = encoder.encode(JSON.stringify(json));
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+        {name: "AES-GCM", iv},
+        key,
+        data
+    ));
+
+    const packageObj = {
+        salt: Array.from(salt),
+        iv: Array.from(iv),
+        ciphertext: Array.from(ciphertext),
+        version: 1
+    };
+    const blob = new Blob([JSON.stringify(packageObj)], {type: "application/json"});
+    return blob;
+}
+
+export const exportCryptoKeyAsBase64 = async (key) => {
+    const raw = await window.crypto.subtle.exportKey('raw', key);
+    return arrayBufferToBase64(raw)
+};
+
 export const importKey = async (rawKey) => {
     const key = await window.crypto.subtle.importKey(
         'raw',
@@ -167,9 +208,4 @@ export const decryptDataChunk = async (encryptedObject, key) => {
         console.error("Error decrypting data chunk:", error);
         throw new Error("Decryption failed.");
     }
-};
-
-export const exportCryptoKeyAsBase64 = async (key) => {
-    const raw = await window.crypto.subtle.exportKey('raw', key);
-    return btoa(String.fromCharCode(...new Uint8Array(raw)));
 };

@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "typeRoots": [
       "./types",
       "./node_modules/@types"
@@ -23,7 +27,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": [
+        "./*"
+      ]
     }
   },
   "include": [
@@ -33,5 +39,7 @@
     ".next/types/**/*.ts",
     "../../../.cache/JetBrains/IntelliJIdea2024.2/javascript/typings/express/4.17.23/node_modules/@types/node/module.d.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

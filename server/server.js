@@ -51,17 +51,8 @@ const ssl = {
 
 const server = https.createServer(ssl, app);
 
-require('./socket').init(server);   // initialise singleton
-const io = require('./socket').get();
-io.on('connection', (socket) => {
-    socket.on('identify', (room) => {
-        if (typeof room === 'string') socket.join(room);
-    });
-});
-
 
 app.use('/api/user', require('./routes/user-route'));
-app.use('/api/device', require('./routes/device-route'));
 app.use('/api/organizations', require('./routes/organization-route'));
 app.use('/api/video', require('./routes/video-route'));
 

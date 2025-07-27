@@ -41,27 +41,13 @@ export default function Navbar98() {
                     {href: "/home", label: "Home"},
                     {href: "/videos", label: "Videos"},
                 ];
-                if (user.role !== "trusteduser") nav.push({href: "/users", label: "Users"});
 
-                /** primary‑device check */
-                try {
-                    const devRes = await pinnedFetch(
-                        "/api/device/list",
-                        {headers: {Authorization: `Bearer ${token}`}}
-                    );
-                    if (devRes.ok) {
-                        const devs = await devRes.json();
-                        const localId = localStorage.getItem("device_id");
-                        const primary = devs.find((d: any) => d.isPrimary);
-                        if (primary && primary.deviceId === localId) {
-                            nav.push({href: "/multidevice", label: "Multidevice"});
-                        }
-                    }
-                } catch {/* not fatal */
+                if (user.role !== "trusteduser") {
+                    nav.push({href: "/users", label: "Users"});
                 }
 
                 setLinks(nav);
-            } catch {
+            } catch (err) {
                 console.error("Navbar bootstrap failed:", err);
             }
         })();

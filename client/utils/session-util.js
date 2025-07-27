@@ -2,7 +2,7 @@ const SYMM = 'session_symm';
 const HMAC = 'session_hmac';
 
 
-export function setSessionKeys(symmBase64: string, hmacBase64: string) {
+export function setSessionKeys(symmBase64, hmacBase64) {
     sessionStorage.setItem(SYMM, symmBase64);
     sessionStorage.setItem(HMAC, hmacBase64);
 }

@@ -9,10 +9,10 @@ const {
     currentUser,
     login,
     verifyEmail,
+    getSymmetric,
 } = require("../controllers/user-ctrl");
 const User = require('../models/user')
 const validateToken = require("../middleware/token-handler")
-const {writeFileSync, readFileSync} = require("node:fs");
 
 
 router.head('/register', (req, res) => res.status(200).end());
@@ -21,11 +21,13 @@ router.head('/verify', (req, res) => res.status(200).end());
 router.head('/current', validateToken, (req, res) => res.status(200).end());
 router.head('/logout', validateToken, (req, res) => res.status(200).end());
 router.head('/trusted/csr', (req, res) => res.status(200).end());
+router.head('/getSymmetric', validateToken, (req, res) => res.status(200).end());
 
 router.post('/register', registerUser)
 router.post('/login', login);
 router.get('/verify', verifyEmail);
 router.get('/current', validateToken, currentUser)
+router.get('/getSymmetric', validateToken, getSymmetric);
 
 router.post('/logout', validateToken, (req, res) => {
     try {

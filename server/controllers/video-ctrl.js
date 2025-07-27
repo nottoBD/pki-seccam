@@ -37,7 +37,7 @@ exports.uploadChunk = async (req, res) => {
         await VideoChunk.create({
             videoName: videoId,
             chunk,
-            metadata: [{chunkIndex, timestamp, chunkSize}],
+            metadata: {chunkIndex, timestamp, chunkSize},
         });
 
         logger.info(`Chunk ${chunkIndex} of ${videoId} saved for ${username}`);
@@ -95,7 +95,7 @@ exports.listChunks = async (req, res) => {
             .sort({'metadata.chunkIndex': 1});
 
         if (!chunks.length) return res.status(404).send('No chunks');
-        res.json(chunks.map(c => ({chunk: c.chunk, metadata: c.metadata})));
+        res.json(chunks.map(c => ({chunk: c.chunk, metadata: [c.metadata]})));
     } catch (err) {
         logger.error(err.message);
         res.status(500).send('Internal Server Error');

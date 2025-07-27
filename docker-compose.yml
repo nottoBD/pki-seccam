@@ -23,6 +23,8 @@ services:
       - ./pki/leafs/client/client.key:/etc/ssl/private/client.key:ro
       #  root CA
       - ./pki/roots/step-root.pem:/etc/ssl/certs/step-root.pem:ro
+      # root + intermed chain
+      - ./pki/roots/clients_ca_chain.pem:/etc/ssl/certs/clients_ca_chain.pem:ro
       # pinned leafs (facultative cfr nginx.conf)
       - ./nginx/pins/server.crt:/etc/ssl/pins/server.crt:ro
       - ./nginx/pins/client.crt:/etc/ssl/pins/client.crt:ro
@@ -60,6 +62,7 @@ services:
       TLS_CERT_PATH: /tls/server.crt
       TLS_KEY_PATH: /tls/server.key
       NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT: ${NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
     depends_on:
       - server
     networks:
@@ -85,6 +88,7 @@ services:
       - ./pki/leafs/server:/pki:rw
       - stepca-data:/ca:ro
     environment:
+      CA_BUNDLE_PATH: /etc/ssl/certs/clients_ca_chain.pem
       NODE_EXTRA_CA_CERTS: /ca/certs/root_ca.crt
       TLS_CERT_PATH: /tls/server.crt
       TLS_KEY_PATH: /tls/server.key
@@ -127,7 +131,7 @@ services:
 
   step-ca:
     expose: [ "9000", "9001" ]
-    image: smallstep/step-ca:0.28.3
+    image: smallstep/step-ca:0.28.4
     container_name: step-ca
     restart: unless-stopped
     environment:
@@ -171,10 +175,11 @@ services:
         "--smtp-require-starttls",
         "--listen=0.0.0.0:3025",
         "--ui-tls-cert=/tls/server.crt",
-        "--ui-tls-key=/tls/server.key"
+        "--ui-tls-key=/tls/server.key",
+        "--webroot", "mailpit"
       ]
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:3025/api/v1/messages?limit=1 || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q --no-check-certificate -O - https://127.0.0.1:3025/mailpit/api/v1/messages?limit=1 || exit 1" ]
       interval: 5s
       retries: 15
       start_period: 5s
@@ -189,6 +194,7 @@ services:
     container_name: cert-signer
     restart: unless-stopped
     environment:
+      CHAIN_PEM_PATH: /etc/ssl/certs/clients_ca_chain.pem
       STEP_CA_URL: https://step-ca:9000
       STEP_ROOT: /home/step/certs/root_ca.crt
       STEP_PROVISIONER: "seccam-provisioner"
@@ -196,6 +202,7 @@ services:
     volumes:
       - stepca-data:/home/step:rw
       - ./pki/leafs:/certs:ro
+      - ./pki/roots/clients_ca_chain.pem:/etc/ssl/certs/clients_ca_chain.pem:ro
     depends_on:
       - step-ca
     networks:

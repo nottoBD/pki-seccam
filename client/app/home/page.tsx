@@ -6,13 +6,11 @@ import {useRouter} from "next/navigation";
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 
-import {handleProfile, handleProfileTrusted} from "@/cryptography/handlers";
 import {logout} from "@/actions/auth";
 import {encryptDatachunk, importKey,} from "@/cryptography/symmetric";
-import {base64ToArrayBuffer, decryptWithPrivateKey} from "@/cryptography/asymmetric";
+import {base64ToArrayBuffer} from "@/cryptography/asymmetric";
 import {pinnedFetch} from "@/cryptography/certificate";
-import {getKey} from "@/keys/indexed-keys";
-import {getSessionKeys, setSessionKeys} from "@/keys/session-keys";
+import {getSessionKeys} from "@/utils/session-util";
 
 
 export default function HomePage() {
@@ -35,44 +33,19 @@ export default function HomePage() {
                 const res = await pinnedFetch("/api/user/current", {
                     headers: {Authorization: `Bearer ${token}`},
                 });
-
                 if (!res.ok) return router.replace("/");
-                const resData = await res.json();
 
-                let displayName = "";
-                if (resData.isTrustedUser) {
-                    const p = await handleProfileTrusted(resData);
-                    displayName = p.fullname;
-                    setName(displayName);
+                const user = await res.json();
+                if (user.trusted) {
                     return router.replace("/hometrusted");
-                } else {
-                    const p = await handleProfile(resData);
-                    displayName = p.username;
-                    setName(displayName);
                 }
 
-                //multidevice card if primary
-                try {
-                    const devRes = await pinnedFetch("/api/device/list", {
-                        headers: {Authorization: `Bearer ${token}`},
-                    });
+                setName(user.username);
 
-                    if (devRes.ok) {
-                        const devData = await devRes.json();
-                        const primary = devData.find((d: any) => d.isPrimary);
-                        const localId = localStorage.getItem("device_id");
-                        if (primary && localId && primary.deviceId === localId) {
-                            //TODO: add primary device logic
-                        }
-                    }
-                } catch (err) {
-                    console.error("Could not fetch device list:", err);
-                }
-
-                // camera after auth OK
-                await initializeMedia(token, resData.isTrustedUser, resData.username);
+                await initializeMedia(token, user.username);
             } catch (err) {
-                console.error("Auth check failed:", err);
+                console.error("Auth check or profile setup failed:", err);
+                setErrorMessage("Session error. Please log in again.");
                 await handleLogout();
             }
         })();
@@ -86,50 +59,78 @@ export default function HomePage() {
         }
         userStreamRef.current?.getTracks().forEach((t) => t.stop());
         userStreamRef.current = null;
+        setRecording(false);
     };
 
-    async function initializeMedia(token: string, trusted: boolean, username: string) {
+    async function initializeMedia(token: string, username: string) {
         try {
             if (!navigator.mediaDevices?.getUserMedia) {
                 setErrorMessage("Media devices not supported.");
                 return;
             }
-            const userStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true,
-            });
+
+            // Lowe qual: 640x480 @ 15FPS
+            const constraints = {
+                video: {
+                    width: {ideal: 640},
+                    height: {ideal: 480},
+                    frameRate: {ideal: 15}
+                },
+                audio: false
+            };
+            const userStream = await navigator.mediaDevices.getUserMedia(constraints);
             userStreamRef.current = userStream;
-            if (videoRef.current) videoRef.current.srcObject = userStream;
 
-            let mimeType: string =
-                'video/webm;codecs="vp8, opus"' as const;
-            if (!MediaRecorder.isTypeSupported(mimeType))
-                mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-                    ? 'video/webm;codecs=vp9'
-                    : MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
-                        ? 'video/webm;codecs=vp8'
-                        : "video/webm";
+            //hidden video element to play the raw stream
+            const videoElement = document.createElement('video');
+            videoElement.srcObject = userStream;
+            videoElement.muted = true;
+            await videoElement.play();
 
+            // canvas grayscale
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 480;
+            const ctx = canvas.getContext('2d');
 
-            let {symmBase64} = getSessionKeys();
-            let symKeyBase64 = symmBase64;
+            // Apply  grayscale
+            let animationFrameId: number;
+            const drawGrayscale = () => {
+                if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+                    for (let i = 0; i < data.length; i += 4) {
+                        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                        data[i] = avg;     // Red
+                        data[i + 1] = avg; // Green
+                        data[i + 2] = avg; // Blue
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                }
+                animationFrameId = requestAnimationFrame(drawGrayscale);
+            };
+            drawGrayscale();
 
-            if (!symKeyBase64) {
-                const resp = await pinnedFetch("/getSymmetric", {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-                const {encryptedSymmetricKey} = await resp.json();
+            const grayscaleStream = canvas.captureStream(15);
 
-                const deviceId = localStorage.getItem("device_id")!;
-                const privKey = await getKey(deviceId);
-                if (!privKey) throw new Error("Device private key not found");
-
-                symKeyBase64 = await decryptWithPrivateKey(encryptedSymmetricKey, privKey);
-                setSessionKeys(symKeyBase64, getSessionKeys().hmacBase64 ?? '');
+            if (videoRef.current) {
+                videoRef.current.srcObject = grayscaleStream;
             }
-            const symKey = await importKey(base64ToArrayBuffer(symKeyBase64));
 
-            const recorder = new MediaRecorder(userStream, {mimeType});
+            // VP8 efficient
+            let mimeType = 'video/webm;codecs=vp8';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'video/webm';
+            }
+
+            const {symmBase64} = getSessionKeys();
+            if (!symmBase64) {
+                throw new Error("Session keys not available. Log in again.");
+            }
+            const symKey = await importKey(base64ToArrayBuffer(symmBase64));
+
+            const recorder = new MediaRecorder(grayscaleStream, {mimeType});
             mediaRecorderRef.current = recorder;
 
             const chunks: BlobPart[] = [];
@@ -158,20 +159,19 @@ export default function HomePage() {
                 }
             };
             recorder.onstop = () => {
+                cancelAnimationFrame(animationFrameId);
+                videoElement.pause();
                 const blob = new Blob(chunks, {type: mimeType});
                 setMediaUrl(URL.createObjectURL(blob));
                 setRecording(false);
             };
 
             setRecording(true);
-            recorder.start(500);
+            recorder.start(800);
             setErrorMessage(null);
         } catch (err: any) {
             console.error("Media init failed:", err);
-            setErrorMessage(
-                err?.message ??
-                "Could not start camera. Check permissions or another app may be using it."
-            );
+            setErrorMessage(err?.message ?? "Could not start camera.");
         }
     }
 
@@ -181,6 +181,24 @@ export default function HomePage() {
         router.replace("/");
     };
 
+    useEffect(() => {
+        const handleVisibilityChange = async () => {
+            if (document.visibilityState === 'hidden') {
+                cleanupResources();
+            } else {
+                const token = localStorage.getItem("token");
+                if (token && name) {
+                    await initializeMedia(token, name);
+                }
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [name]);
 
     return (
         <>

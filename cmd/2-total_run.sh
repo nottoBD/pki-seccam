@@ -108,7 +108,6 @@ say "👉  Mailpit Leaf-cert testing email:"
     -d '{\"From\":{\"Email\":\"bob@seccam.be\"},\"To\":[{\"Email\":\"david.botton@ulb.be\"}],\"Subject\":\"Mailpit Security Posture\",\"Text\":\"Here is Mailpit UI, with its own Step‑CA signed leaf certificate, Web UI & REST API are served only over HTTPS on 3025, mTLS is enforced everywhere in the network starting at nginx, TLS handshakes are fully verified. SMTP listens on 1025 with STARTTLS required, advertising the same certificate, so NodeMailer refuses to downgrade TLS. Certificate pinning is enabled on every request client to server (cfr. X-Server-Cert field). All on‑wire traffic is encrypted and MITM-proof within the limits of the Docker network.\"}' && printf 'You have received an email at Mailpit!'
   "
 
-printf "\n\n Remember to flush cache and cookies.\n"
-say " Client   @ https://localhost:3443"
-say " Server   @ https://localhost:8888"
-say " Mailpit  @ https://localhost:3025"
+printf "\n\n Enjoy. \n"
+say " Seccam Client   @ https://localhost:3443"
+say " Mailpit UI      @ https://localhost:3443/mailpit/"

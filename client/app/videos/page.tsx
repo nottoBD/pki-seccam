@@ -111,36 +111,41 @@ export default function VideoPage() {
 
         try {
             const token = localStorage.getItem("token");
-            let symKeyResponse;
             let encryptedSymmetricKey;
             let privateKey;
             let owner_username;
+            let symmetricKey;
             if (!isTrustedUser) {
-                symKeyResponse = await pinnedFetch("/getSymmetric", {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-                const symKeyData = await symKeyResponse.json();
-                encryptedSymmetricKey = symKeyData.encryptedSymmetricKey;
-                privateKey = localStorage.getItem(`${symKeyData.username}_private_key`);
-                owner_username = symKeyData.username;
+                owner_username = name;  // Current user's username from /api/user/current
+                const symmetricKeyBase64 = sessionStorage.getItem('symmK');
+                if (!symmetricKeyBase64) {
+                    throw new Error("Symmetric key not found in session");
+                }
+                symmetricKey = await importKey(base64ToArrayBuffer(symmetricKeyBase64));
             } else {
                 for (const item of trustedUserVideos) {
-                    if (item.videos.includes(video)) {
+                    if (item.videos.some((v: any) => v.name === video.name)) {
                         encryptedSymmetricKey = item.encrypted_symmetric_key;
                         owner_username = item.username;
                         break;
                     }
                 }
-                /* use the organisation’s identity key */
                 privateKey = localStorage.getItem('org_identity_priv');
-            }
-            if (!privateKey) {
-                throw new Error("Private key not found for the user.");
-            }
+                if (!privateKey) {
+                    throw new Error("Private key not found for the user.");
+                }
 
-            const importedPrivateKey = await importPrivateKey(privateKey, "decrypt");
-            const symmetricKeyBase64 = await decryptWithPrivateKey(encryptedSymmetricKey, importedPrivateKey);
-            const symmetricKey = await importKey(base64ToArrayBuffer(symmetricKeyBase64));
+                const importedPrivateKey =
+                    typeof privateKey === "string"
+                        ? await importPrivateKey(privateKey, "decrypt")
+                        : privateKey;
+
+                const symmetricKeyBase64 =
+                    await decryptWithPrivateKey(encryptedSymmetricKey, importedPrivateKey);
+
+                symmetricKey =
+                    await importKey(base64ToArrayBuffer(symmetricKeyBase64));
+            }
 
             let chunkResponse;
             let chunkData;
@@ -219,7 +224,7 @@ export default function VideoPage() {
                         >
                             {videos.map((v, idx) => (
                                 <div key={idx} className="sunken-panel" style={{padding: 4, textAlign: "center"}}>
-                                    <p style={{fontSize: 12, marginBottom: 4}}>{formatDate(v.videoName)}</p>
+                                    <p style={{fontSize: 12, marginBottom: 4}}>{formatDate(v.name)}</p>
                                     <p style={{fontSize: 11, marginBottom: 6}}>
                                         Shared by: {v.sharedBy ?? "You"}
                                     </p>
@@ -230,7 +235,7 @@ export default function VideoPage() {
                         </div>
                     )}
                 </Window98>
-                {selectedVideo && decryptedVideoUrl && (
+                {selectedVideo && (
                     <div
                         style={{
                             position: "fixed",
@@ -242,23 +247,27 @@ export default function VideoPage() {
                             zIndex: 1000,
                         }}
                     >
-                        <Window98 title={formatDate(selectedVideo.videoName)} width={480}>
+                        <Window98 title={formatDate(selectedVideo.name)} width={480}>
+                            {loading && <p>Loading video chunks...</p>}
                             <video
                                 src={decryptedVideoUrl}
                                 controls
+                                preload="auto"  // Encourage buffering
                                 style={{width: "100%", height: "auto"}}
                             />
                             <div
                                 className="field-row"
                                 style={{justifyContent: "space-between", marginTop: 6}}
                             >
-                                <a
-                                    href={decryptedVideoUrl}
-                                    download={selectedVideo.videoName}
-                                    className="default"
-                                >
-                                    Download
-                                </a>
+                                {decryptedVideoUrl && (
+                                    <a
+                                        href={decryptedVideoUrl}
+                                        download={selectedVideo.name}
+                                        className="default"
+                                    >
+                                        Download
+                                    </a>
+                                )}
                                 {!isTrustedUser && (
                                     <button onClick={handleDeleteVideo}>Delete</button>
                                 )}
