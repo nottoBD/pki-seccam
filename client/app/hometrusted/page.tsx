@@ -4,34 +4,41 @@ import React, {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
-import {handleProfileTrusted} from "@/cryptography/handlers";
 import {pinnedFetch} from "@/cryptography/certificate";
 
 const HomeTrustedPage = () => {
     const [profile, setProfile] = useState<any>(null);
     const [message, setMessage] = useState("");
+    const [checkingAuth, setCheckingAuth] = useState(true);
     const router = useRouter();
 
     useEffect(() => {
         (async () => {
+            const token = localStorage.getItem("token");
+
+            if (!token) {
+                setCheckingAuth(false);
+                return router.replace("/");
+            }
             try {
-                const token = localStorage.getItem("token");
-                if (!token) return router.replace("/");
-
                 const res = await pinnedFetch("/api/user/current", {
-                    headers: {Authorization: `Bearer ${token}`},
+                    headers: {Authorization: `Bearer ${token}`}
                 });
-                if (!res.ok) return router.replace("/");
-
-                const resData = await res.json();
-                if (!resData.isTrustedUser) return router.replace("/home");
-
-                const p = await handleProfileTrusted(resData);
-                setProfile(p);
-                setMessage("");
-            } catch (err: any) {
-                setMessage("Authentication or decryption failed. Please re-import your org crypto package or login again.");
-                setTimeout(() => router.replace("/"), 2500);
+                if (!res.ok) {
+                    setCheckingAuth(false);
+                    return router.replace("/");
+                }
+                const user = await res.json();
+                if (!user.isTrustedUser) {
+                    setCheckingAuth(false);
+                    return router.replace("/home");
+                }
+                setProfile(user);
+            } catch (err) {
+                setMessage("Failed to load profile. Please log in again.");
+                router.replace("/");
+            } finally {
+                setCheckingAuth(false);
             }
         })();
     }, [router]);

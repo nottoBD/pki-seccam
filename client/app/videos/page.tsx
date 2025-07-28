@@ -1,5 +1,5 @@
 "use client";
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {decryptDataChunk, importKey} from '@/cryptography/symmetric';
 import {base64ToArrayBuffer, decryptWithPrivateKey, importPrivateKey} from '@/cryptography/asymmetric';
@@ -7,6 +7,7 @@ import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {formatDate} from "@/utils/date-util";
 import {pinnedFetch} from "@/cryptography/certificate";
+import {getSessionKeys} from "@/utils/session-util";
 
 
 export default function VideoPage() {
@@ -22,6 +23,7 @@ export default function VideoPage() {
     const [loading, setLoading] = useState(false);
     const router = useRouter();
     const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
+    const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
 
     useEffect(() => {
         if (alert) {
@@ -116,12 +118,12 @@ export default function VideoPage() {
             let owner_username;
             let symmetricKey;
             if (!isTrustedUser) {
-                owner_username = name;  // Current user's username from /api/user/current
-                const symmetricKeyBase64 = sessionStorage.getItem('symmK');
-                if (!symmetricKeyBase64) {
+                owner_username = name; // /current endpoint
+                const {symmBase64} = getSessionKeys();
+                if (!symmBase64) {
                     throw new Error("Symmetric key not found in session");
                 }
-                symmetricKey = await importKey(base64ToArrayBuffer(symmetricKeyBase64));
+                symmetricKey = await importKey(base64ToArrayBuffer(symmBase64));
             } else {
                 for (const item of trustedUserVideos) {
                     if (item.videos.some((v: any) => v.name === video.name)) {
@@ -206,6 +208,11 @@ export default function VideoPage() {
         }
     };
 
+    const handleCloseVideo = () => {
+        setSelectedVideo(null);
+        setDecryptedVideoUrl(null);
+    };
+
     return (
         <>
             <Navbar98/>
@@ -250,6 +257,7 @@ export default function VideoPage() {
                         <Window98 title={formatDate(selectedVideo.name)} width={480}>
                             {loading && <p>Loading video chunks...</p>}
                             <video
+                                ref={videoPlayerRef}
                                 src={decryptedVideoUrl}
                                 controls
                                 preload="auto"  // Encourage buffering
@@ -271,7 +279,7 @@ export default function VideoPage() {
                                 {!isTrustedUser && (
                                     <button onClick={handleDeleteVideo}>Delete</button>
                                 )}
-                                <button onClick={() => setSelectedVideo(null)}>Close</button>
+                                <button onClick={handleCloseVideo}>Close</button>
                             </div>
                         </Window98>
                     </div>

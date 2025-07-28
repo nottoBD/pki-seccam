@@ -172,13 +172,7 @@ echo -e "\033[33m🛈  Browser certificate created:"
 echo -e "    • Files in $BROWSER_DIR"
 echo -e "    • Import bundle at $PROJECT_ROOT/${USER_ID}.p12  (password: $P12_PASSWORD)\033[0m"
 
-docker cp step-ca:/home/step/certs/root_ca.crt "$ROOTS_DIR/step-root.pem"
 cp "$ROOTS_DIR/step-root.pem" "$PROJECT_ROOT/step-root.pem"
-
-docker cp step-ca:/home/step/certs/intermediate_ca.crt "$ROOTS_DIR/intermediate_ca.crt"
-ln -sf intermediate_ca.crt "$ROOTS_DIR/$(openssl x509 -noout -hash -in "$ROOTS_DIR/intermediate_ca.crt").0"
-
-command -v c_rehash >/dev/null 2>&1 && c_rehash "$ROOTS_DIR" || openssl rehash "$ROOTS_DIR"
 
 docker rm -f step-ca step-ca-bootstrap 2>/dev/null || true
 
@@ -188,8 +182,10 @@ export SSL_CERT_DIR="$ROOTS_DIR" #CApath(c_rehash)
 # fingerprint from fullchain (leaf first cert)
 BACKEND_CERT_PATH="$LEAFS_DIR/server/fullchain.crt"
 CERT_FINGERPRINT=$(openssl x509 -in "$BACKEND_CERT_PATH" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl base64 -A)
+CA_ROOT_FINGERPRINT=$(openssl x509 -in "$ROOTS_DIR/step-root.pem" -outform der | openssl dgst -sha256 | sed 's/^.* //' | tr 'A-F' 'a-f')
 
-say "👉 Server cert SHA‑256 fingerprint:"; printf "%s $CERT_FINGERPRINT"
+say "👉 CA root SHA‑256 fingerprint:"; printf "%s $CA_ROOT_FINGERPRINT"
+say "\n👉 Server cert SHA‑256 fingerprint:"; printf "%s $CERT_FINGERPRINT"
 
 ENV_FILE="$PROJECT_ROOT/.env"; touch "$ENV_FILE"
 
@@ -206,6 +202,13 @@ if grep -q '^TOTP_KEY=' "$ENV_FILE"; then
 else
   echo "TOTP_KEY=$(openssl rand -hex 32)" >> "$ENV_FILE"
   printf "\n (Appended TOTP key)"
+fi
+if grep -q '^NEXT_PUBLIC_CA_ROOT_FINGERPRINT=' "$ENV_FILE"; then
+  sed -i.bak "s|^NEXT_PUBLIC_CA_ROOT_FINGERPRINT=.*|NEXT_PUBLIC_CA_ROOT_FINGERPRINT=$CA_ROOT_FINGERPRINT|" "$ENV_FILE"
+  printf "\n (Updated CA root fingerprint)"
+else
+  echo "NEXT_PUBLIC_CA_ROOT_FINGERPRINT=$CA_ROOT_FINGERPRINT" >> "$ENV_FILE"
+  printf "\n (Appended CA root fingerprint)"
 fi
 printf "\n"
 

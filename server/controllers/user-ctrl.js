@@ -10,12 +10,11 @@ const TrustedUser = require("../models/trusteduser");
 const Videos = require("../models/videos");
 const logger = require("../logging/logger");
 const Organization = require('../models/organization');
-const io = require("../socket").get();
 const {getSerialNumber} = require('../utils/x509');
 const {sendVerificationMail} = require('../utils/mailer');
 
 
-const getSymmetric = async (req, res) => {
+const getUserSymmetric = async (req, res) => {
     try {
         const {username} = req.user;
         const account =
@@ -24,7 +23,6 @@ const getSymmetric = async (req, res) => {
 
         if (!account) return res.sendStatus(404);
 
-        // Removed device find – use top-level
         return res.json({
             encryptedSymmetricKey: account.encrypted_symmetric_key,
             username
@@ -37,9 +35,15 @@ const getSymmetric = async (req, res) => {
 
 /* CURRENT */
 const currentUser = async (req, res) => {
-    const user = await User.findOne({username: req.user.username}) || await TrustedUser.findOne({username: req.user.username});
-    if (!user) return res.sendStatus(404);
+    let user = await User.findOne({username: req.user.username});
+    let isTrustedUser = false;
 
+    if (!user) {
+        user = await TrustedUser.findOne({username: req.user.username});
+        isTrustedUser = !!user;
+    }
+
+    if (!user) return res.sendStatus(404);
 
     res.json({
         username: user.username,
@@ -47,6 +51,7 @@ const currentUser = async (req, res) => {
         encrypted_symmetric_key: user.encrypted_symmetric_key,
         encrypted_hmac_key: user.encrypted_hmac_key,
         email_verified: user.email_verified,
+        isTrustedUser, // <-- add this line
     });
 };
 
@@ -76,7 +81,7 @@ const registerUser = async (req, res) => {
         const body = req.body;
         const {
             username, email, email_raw,
-            deviceCsr: trustedUserCsr,
+            trustedUserCsr,
             encrypted_symmetric_key, encrypted_hmac_key,
             hmac_email, public_key
         } = body;
@@ -132,14 +137,15 @@ const registerUser = async (req, res) => {
             const secret = speakeasy.generateSecret({name: `Seccam (${body.username})`, length: 20});
             const qrcode_image = await qrcode.toDataURL(secret.otpauth_url);
 
-            // sign device-lvl csr
-            const {data: certResp} = await axios.post("http://cert-signer:3001/sign", {csr: body.deviceCsr});
-            const deviceCertPem = certResp.certificate;
-            const deviceCertPath = `/certs/${body.username}.crt.pem`;
-            fs.writeFileSync(deviceCertPath, deviceCertPem, 'utf8');
+            // sign user csr
+            const {data: certResp} = await axios.post("http://cert-signer:3001/sign", {csr: trustedUserCsr});
+            const userCertPem = certResp.certificate;
+            const userCertPath = `/certs/${body.username}.crt.pem`;
+            fs.writeFileSync(userCertPath, userCertPem, 'utf8');
 
             const encryptedSecret = crypto.publicEncrypt(
-                body.public_key, Buffer.from(secret.base32)
+                body.public_key,
+                Buffer.from(secret.base32)
             ).toString('base64');
             const rawToken = crypto.randomBytes(32).toString('hex');
 
@@ -171,7 +177,7 @@ const registerUser = async (req, res) => {
                 email: body.email_raw,
                 qrcode_image,
                 encrypted_secret: encryptedSecret,
-                deviceCertificate: deviceCertPem,
+                userCertificate: userCertPem,
                 organizationCertificate: org.certPath ? fs.readFileSync(org.certPath, 'utf8') : undefined,
                 message: 'Registration successful, verify your e‑mail.',
             });
@@ -188,15 +194,13 @@ const registerUser = async (req, res) => {
         const secret = speakeasy.generateSecret({name: `Seccam (${username})`, length: 20});
         const qrcode_image = await qrcode.toDataURL(secret.otpauth_url);
 
-        const deviceCertPem = null; //no cert for dashcam users
-
         const encryptedSecret = crypto.publicEncrypt(
             public_key,
             Buffer.from(secret.base32)
         ).toString('base64');
 
 
-         // Gen verif token
+        // Gen verif token
         const rawToken = crypto.randomBytes(32).toString("hex");
 
         const user = new User({
@@ -224,7 +228,6 @@ const registerUser = async (req, res) => {
             email: email_raw,
             qrcode_image,
             encrypted_secret: encryptedSecret,
-            deviceCertificate: deviceCertPem, // always null for normal users!
             message: "Registration successful, verify your email."
         });
     } catch (err) {
@@ -234,7 +237,7 @@ const registerUser = async (req, res) => {
 };
 
 /* LOGIN */
-const login = async (req, res) => {
+const loginUser = async (req, res) => {
     const {username, code} = req.body;
     let user = await User.findOne({username}) || await TrustedUser.findOne({username});
     const trusted = user instanceof TrustedUser;
@@ -259,7 +262,7 @@ const login = async (req, res) => {
 };
 
 /* Email Link Verification.. */
-const verifyEmail = async (req, res) => {
+const verifyUserEmail = async (req, res) => {
     const {username, token} = req.query;
     if (!username || !token) return res.status(400).json({message: "Bad link"});
 
@@ -286,4 +289,4 @@ const verifyEmail = async (req, res) => {
 };
 
 
-module.exports = {registerUser, login, currentUser, verifyEmail, getSymmetric};
+module.exports = {registerUser, loginUser, currentUser, verifyUserEmail, getUserSymmetric};

@@ -18,29 +18,19 @@ import {
     importPublicKey,
     verifySignatureWithPublicKey
 } from "@/cryptography/asymmetric";
-import {buildOrganizationCSR, buildUserCSR} from './certificate';
-import {getUserKeyPackage, saveUserKeyPackage} from "@/utils/idb-util";
+import {buildOrganizationCSR, buildUserCSR} from '@/cryptography/certificate';
 import {setSessionKeys} from "@/utils/session-util";
-
-const toB64 = async k =>
-    btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("raw", k))));
-
 
 export const handleRegistration = async (userData) => {
     try {
-        const existingPackage = await getUserKeyPackage(userData.username);
-        if (existingPackage) {
-            throw new Error('Crypto package already exists for this username. Registration aborted to prevent duplicates.');
-        }
 
         let publicKeyPem;
         let privateKeyJwk;
         let trustedUserCsr = null;
-        let certificate = null;
         const isTrustedUser = !!(userData.fullname && userData.organization);
 
         if (isTrustedUser) {
-            const result = await buildUserCSR(userData.username, navigator.userAgent);
+            const result = await buildUserCSR(userData.username);
             trustedUserCsr = result.csrPem;
             publicKeyPem = result.publicKeyPem;
             privateKeyJwk = result.privateJwk;
@@ -50,7 +40,7 @@ export const handleRegistration = async (userData) => {
             privateKeyJwk = keypair.privateJwk;
         }
 
-        const devicePublicKey = await importPublicKey(publicKeyPem, 'encrypt');
+        const userPublicKey = await importPublicKey(publicKeyPem, 'encrypt');
 
         const symmetricKey = await generateSymmetricKey();
         const hmacKey = await generateHMACKey();
@@ -58,8 +48,8 @@ export const handleRegistration = async (userData) => {
         const symmetricKeyBase64 = await exportCryptoKeyAsBase64(symmetricKey);
         const hmacKeyBase64 = await exportCryptoKeyAsBase64(hmacKey);
 
-        const encrypted_symmetric_key = await encryptWithPublicKey(symmetricKeyBase64, devicePublicKey);
-        const encrypted_hmac_key = await encryptWithPublicKey(hmacKeyBase64, devicePublicKey);
+        const encrypted_symmetric_key = await encryptWithPublicKey(symmetricKeyBase64, userPublicKey);
+        const encrypted_hmac_key = await encryptWithPublicKey(hmacKeyBase64, userPublicKey);
 
         const encrypted_email = await encryptData(userData.email, symmetricKey);
         const emailBlob = JSON.stringify(encrypted_email);
@@ -71,13 +61,15 @@ export const handleRegistration = async (userData) => {
             email: emailBlob,
             hmac_email: email_hmac,
             public_key: publicKeyPem,
-            deviceName: navigator.userAgent,
             email_raw: userData.email,
             encrypted_symmetric_key,
             encrypted_hmac_key,
             isTrustedUser,
         };
 
+
+        let orgPrivateJwk = null;
+        let orgPublicKeyPem = null;
 
         if (isTrustedUser) {
             const encrypted_fullname = await encryptData(userData.fullname, symmetricKey);
@@ -86,27 +78,38 @@ export const handleRegistration = async (userData) => {
             payload.organization = userData.organization.trim();
             payload.country = userData.country.trim();
             payload.trustedUserCsr = trustedUserCsr;
-            payload.orgCsr = await buildOrganizationCSR(
+            const orgResult = await buildOrganizationCSR(
                 userData.fullname, payload.organization, payload.country
             );
+            payload.orgCsr = orgResult.csrPem;
+            orgPrivateJwk = orgResult.privateJwk;
+            orgPublicKeyPem = orgResult.publicKeyPem;
         }
 
-        await saveUserKeyPackage(userData.username, {
+        const userPackage = {
             privateKeyJwk,
             publicKeyPem,
-            certificate,
-            symmetricKey: symmetricKeyBase64,
-            hmacKey: hmacKeyBase64
-        });
+            certificate: null
+        };
+        if (!isTrustedUser) {
+            userPackage.symmetricKey = symmetricKeyBase64;
+            userPackage.hmacKey = hmacKeyBase64;
+        }
 
-        return payload;
+        const orgPackage = isTrustedUser ? {
+            privateKeyJwk: orgPrivateJwk,
+            publicKeyPem: orgPublicKeyPem,
+            certificate: null
+        } : null;
+
+        return {payload, userPackage, orgPackage};
     } catch (err) {
         console.error(err);
         throw new Error('Registration failed client-side.');
     }
 };
 
-export const handleProfile = async (user_data, inMemoryPackage = null, onError = (msg) => {
+export const handleAnyUserSession = async (user_data, inMemoryPackage = null, onError = (msg) => {
 }) => {
     try {
         let keyPackage = inMemoryPackage;
@@ -115,6 +118,11 @@ export const handleProfile = async (user_data, inMemoryPackage = null, onError =
             onError("Crypto package not found or private key malformed.");
             throw new Error("Crypto package not found.");
         }
+
+        if (user_data.isTrustedUser) {
+            return await handleTrustedUserSession(user_data, keyPackage);
+        }
+
         const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
         delete privateKeyJwkCopy.alg;
 
@@ -154,11 +162,10 @@ export const handleProfile = async (user_data, inMemoryPackage = null, onError =
     }
 };
 
-export const handleProfileTrusted = async (user_data, orgKey = null) => {
+export const handleTrustedUserSession = async (userData, decryptedPackage) => {
     try {
         const {
             username,
-            public_key: pkFromServer,
             hmac_username,
             email: encrypted_email,
             hmac_email,
@@ -169,47 +176,30 @@ export const handleProfileTrusted = async (user_data, orgKey = null) => {
             country: encrypted_country,
             hmac_country,
             encrypted_symmetric_key,
-            signature_symmetric_key,
             encrypted_hmac_key,
-            signature_hmac_key,
-        } = user_data;
+        } = userData;
 
-        if (!orgKey) {
-            throw new Error("Organization key missing for trusted user.");
-        }
-        const orgPackage = await getOrgKeyPair(orgKey);
-        if (!orgPackage || !orgPackage.jwk || !orgPackage.publicPem) {
-            throw new Error('Organization key-pair missing in crypto package. Import org package.');
-        }
-        const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
-        delete privateKeyJwkCopy.alg;
-        delete privateKeyJwkCopy.key_ops;
+        const userPrivateKeyJwkCopy = {...decryptedPackage.userPrivateKeyJwk};
+        delete userPrivateKeyJwkCopy.alg;
+        delete userPrivateKeyJwkCopy.key_ops;
 
-        const pubKey = await importPublicKey(orgPackage.publicPem, 'verify');
+        const orgPublicPem = decryptedPackage.orgPublicKeyPem;
+
+        const pubKey = await importPublicKey(orgPublicPem, 'verify');
         const privKey = await window.crypto.subtle.importKey(
             'jwk',
-            privateKeyJwkCopy,
+            userPrivateKeyJwkCopy,
             {name: 'RSA-OAEP', hash: 'SHA-256'},
             true,
             ['decrypt']
         );
 
-        // Signature verification on encrypted keys
-        const sigOK_sym = await verifySignatureWithPublicKey(
-            encrypted_symmetric_key, signature_symmetric_key, pubKey);
-        const sigOK_hmac = await verifySignatureWithPublicKey(
-            encrypted_hmac_key, signature_hmac_key, pubKey);
-        if (!sigOK_sym || !sigOK_hmac) throw new Error('Wrapped key signature mismatch');
 
-        // Decrypt keys
-        const symKey = await importKey(
-            base64ToArrayBuffer(
-                await decryptWithPrivateKey(encrypted_symmetric_key, privKey)
-            ));
-        const hmacKey = await importHmacKey(
-            base64ToArrayBuffer(
-                await decryptWithPrivateKey(encrypted_hmac_key, privKey)
-            ));
+        const symKeyBase64 = await decryptWithPrivateKey(encrypted_symmetric_key, privKey);
+        const hmacKeyBase64 = await decryptWithPrivateKey(encrypted_hmac_key, privKey);
+
+        const symKey = await importKey(base64ToArrayBuffer(symKeyBase64));
+        const hmacKey = await importHmacKey(base64ToArrayBuffer(hmacKeyBase64));
 
         // MAC checks
         const macOK_user = await verifyMAC(username, hmac_username, hmacKey);
@@ -244,8 +234,8 @@ export const handleProfileTrusted = async (user_data, orgKey = null) => {
 
         // Store session keys
         setSessionKeys(
-            btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.exportKey("raw", symKey)))),
-            btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.exportKey("raw", hmacKey))))
+            symKeyBase64,
+            hmacKeyBase64
         );
 
         return {

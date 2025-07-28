@@ -16,7 +16,7 @@ export default function EditUsers() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const [name, setName] = useState("");
-    const [orgs, setOrgs] = useState([]);
+    const [trustedUsers, setTrustedUsers] = useState([]);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const router = useRouter();
@@ -41,7 +41,7 @@ export default function EditUsers() {
                     if (data.isTrustedUser) {
                         return router.push("/hometrusted");
                     }
-                    fetchOrgs();
+                    fetchTrustedUsers();
                 } else {
                     router.push("/");
                 }
@@ -54,29 +54,29 @@ export default function EditUsers() {
         })();
     }, []);
 
-    const fetchOrgs = async () => {
+    const fetchTrustedUsers = async () => {
         setLoading(true);
         setErrorMessage(null);
 
         try {
             const token = localStorage.getItem("token");
-            const response = await pinnedFetch("/api/organizations/list", {
+            const response = await pinnedFetch("/api/trusted-users/list", {
                 headers: {Authorization: `Bearer ${token}`},
             });
             if (response.ok) {
-                setOrgs(await response.json());
+                setTrustedUsers(await response.json());
             } else {
-                setErrorMessage("Failed to fetch users.");
+                setErrorMessage("Failed to fetch trusted users.");
             }
         } catch (error) {
-            console.error("Error fetching users:", error);
-            setErrorMessage("An error occurred while fetching your users.");
+            console.error("Error fetching trusted users:", error);
+            setErrorMessage("An error occurred while fetching trusted users.");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleOrgSelect = async (org: string) => {
+    const handleTrustedUserSelect = async (trustedUser: string) => {
         const {default: forge} = await import('node-forge');
         try {
             const token = localStorage.getItem("token");
@@ -94,19 +94,19 @@ export default function EditUsers() {
 
             const importedPrivateKey = await importPrivateKey(privateKey, "decrypt");
             const symmetricKeyBase64 = await decryptWithPrivateKey(encryptedSymmetricKey, importedPrivateKey);
-            const cert = forge.pki.certificateFromPem(org.certificate);
+            const cert = forge.pki.certificateFromPem(trustedUser.certificate);
 
             const spki = forge.pki.publicKeyToSubjectPublicKeyInfo(cert.publicKey);
             const pubKeyPem = forge.pki.publicKeyInfoToPem(spki);
 
-            const orgPubKey = await importPublicKey(pubKeyPem, 'encrypt');
-            const encryptedKey = await encryptWithPublicKey(symmetricKeyBase64, orgPubKey);
+            const trustedUserPubKey = await importPublicKey(pubKeyPem, 'encrypt');
+            const encryptedKey = await encryptWithPublicKey(symmetricKeyBase64, trustedUserPubKey);
 
-            const sharedResponse = await pinnedFetch("/api/organizations/share", {
+            const sharedResponse = await pinnedFetch("/api/trusted-users/share", {
                 method: 'POST',
                 headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    organization: org._id,
+                    trustedUser: trustedUser._id,
                     encrypted_symmetric_key: encryptedKey
                 }),
             });
@@ -116,7 +116,7 @@ export default function EditUsers() {
                     type: "success",
                     message: sharedResponseData.message
                 });
-                fetchOrgs();
+                fetchTrustedUsers();
             }
         } catch (error) {
             console.error("Error encrypting/decrypting keys:", error);
@@ -128,7 +128,7 @@ export default function EditUsers() {
         <>
             <Navbar98/>
             <main style={{display: "flex", justifyContent: "center", marginTop: 40}}>
-                <Window98 title="Trusted Companies" width={420}>
+                <Window98 title="Trusted Users" width={420}>
                     {loading && <p>Loading..</p>}
 
                     {alert && (
@@ -137,22 +137,22 @@ export default function EditUsers() {
                         </p>
                     )}
 
-                    {!loading && orgs.length > 0 ? (
+                    {!loading && trustedUsers.length > 0 ? (
                         <ul style={{marginBottom: 12}}>
-                            {orgs.map((o) => (
+                            {trustedUsers.map((u) => (
                                 <li
-                                    key={o._id}
+                                    key={u._id}
                                     style={{display: "flex", justifyContent: "space-between"}}
                                 >
-                                    <b>{o.name} ({o.country})</b>
-                                    <button onClick={() => handleOrgSelect(o)}>
+                                    <b>{u.username}</b>
+                                    <button onClick={() => handleTrustedUserSelect(u)}>
                                         Share With!
                                     </button>
                                 </li>
                             ))}
                         </ul>
                     ) : (
-                        !loading && <p>No Organization left to trust.</p>
+                        !loading && <p>No trusted users available.</p>
                     )}
                 </Window98>
             </main>

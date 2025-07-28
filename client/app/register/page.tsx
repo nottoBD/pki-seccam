@@ -2,16 +2,15 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import {countries} from 'countries-list';
-import {register} from '@/actions/auth';
+import {register} from '@/handlers/auth-hdlr';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {useRouter} from "next/navigation";
 
-import {getOrgCert, getOrgKeyPair, getUserKeyPackage, saveOrgCert, saveUserKeyPackage} from '@/utils/idb-util';
 import {encryptCryptoPassportRegistration} from "@/cryptography/symmetric";
 
 const USERNAME_REGEX = /^[A-Za-z0-9_.]{5,16}$/;  // 5–16 chars, letters/digits/._
-const FULLNAME_REGEX = /^[A-Za-zÀ-ÿ' ]{10,64}$/; // 10–64, letters + accents, spaces, '
+const FULLNAME_REGEX = /^[A-Za-zÀ-ÿ' ]{6,24}$/; // 6–24, letters + accents, spaces, '
 const ORG_REGEX = /^[A-Za-z0-9&' ]{5,32}$/;      // 5–32, letters/digits/&,spaces'
 
 
@@ -31,6 +30,7 @@ const Register = () => {
     const [userErr, setUserErr] = useState('');
     const [fullErr, setFullErr] = useState('');
     const [orgErr, setOrgErr] = useState('');
+    const [countryErr, setCountryErr] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const usernameRef = useRef<HTMLInputElement>(null);
     const passwordRef = useRef<HTMLInputElement>(null);
@@ -38,11 +38,11 @@ const Register = () => {
     const [showExportModal, setShowExportModal] = useState(false);
     const [password, setPassword] = useState('');
     const [password2, setPassword2] = useState('');
-    const [packageType, setPackageType] = useState<'user' | 'org' | null>(null);
-    const [orgKeyToExport, setOrgKeyToExport] = useState<string | null>(null);
 
     const [exportError, setExportError] = useState('');
     const [exportDone, setExportDone] = useState(false);
+
+    const [cryptoPackage, setCryptoPackage] = useState<any>(null);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const countryList = Object.entries(countries).map(([code, c]) => ({
@@ -56,6 +56,16 @@ const Register = () => {
         }
     }, []);
 
+    useEffect(() => {
+        if (!isTrustedUser) {
+            setFullErr('');
+            setOrgErr('');
+            setCountryErr('');
+        } else {
+            setCountryErr(country ? '' : 'Country required');
+        }
+    }, [isTrustedUser, country]);
+
     const handleExportDownload = async () => {
         setExportError('');
         if (!password || password.length < 8) {
@@ -67,32 +77,16 @@ const Register = () => {
             return;
         }
         try {
-            if (packageType === 'user') {
-                const pkg = await getUserKeyPackage(username);
-                if (!pkg) throw new Error("No package data found");
-                const blob = await encryptCryptoPassportRegistration(pkg, password);
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = `${username}-crypto-package.sec.json`;
-                link.click();
-            }
-            if (packageType === 'org' && orgKeyToExport) {
-                // org key and cert
-                const keyPair = await getOrgKeyPair(orgKeyToExport);
-                const cert = await getOrgCert(orgKeyToExport);
-                if (!keyPair || !cert) throw new Error("No org package found");
-                const orgPkg = {...keyPair, cert};
-                const blob = await encryptCryptoPassportRegistration(orgPkg, password);
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = `${orgKeyToExport}-org-package.sec.json`;
-                link.click();
-            }
+            if (!cryptoPackage) throw new Error("No package data found");
+            const blob = await encryptCryptoPassportRegistration(cryptoPackage, password);
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${username}-crypto-package.sec.json`;
+            link.click();
             setExportDone(true);
             setShowExportModal(false);
             setPassword('');
             setPassword2('');
-            setPackageType(null);
         } catch (err: any) {
             setExportError("Failed to export package: " + err.message);
         }
@@ -115,49 +109,48 @@ const Register = () => {
             setIsSubmitting(false);
             return;
         }
-        if (emailError || userErr || fullErr || orgErr) {
+        if (emailError || userErr || fullErr || orgErr || countryErr) {
             setIsSubmitting(false);
             return;
         }
 
-        const payload: any = {username, email};
+        const userData: any = {username, email, isTrustedUser};
         if (isTrustedUser) {
-            Object.assign(payload, {fullname: fullName, organization, country});
+            userData.fullname = fullName;
+            userData.organization = organization;
+            userData.country = country;
         }
 
-
         try {
-            const resp: any = await register(payload);
+            const resp: any = await register(userData);
 
             if (resp.status === 200 && resp.data.qrcode_image) {
                 setQrCode(resp.data.qrcode_image);
 
-                if (resp.data.userCertificate) {
-                    const pkg = await getUserKeyPackage(username);
-                    if (pkg) {
-                        pkg.certificate = resp.data.userCertificate;
-                        await saveUserKeyPackage(username, pkg);
+                let packageToExport;
+                if (isTrustedUser) {
+                    const userPackage = resp.userPackage;
+                    const orgPackage = resp.orgPackage;
+                    if (resp.data.userCertificate) {
+                        userPackage.userCertificate = resp.data.userCertificate;
                     }
-                }
-
-                // Save org certificate if returned
-                if (isTrustedUser && resp.data.organizationCertificate && organization && country) {
-                    const orgKey = `${organization.trim()}_${country.trim()}`;
-                    await saveOrgCert(orgKey, resp.data.organizationCertificate);
-
-                }
-                setPackageType('user');
-                setShowExportModal(true);
-
-                if (
-                    isTrustedUser &&
-                    resp.data.organizationCertificate &&
-                    organization && country
-                ) {
-                    setOrgKeyToExport(`${organization.trim()}_${country.trim()}`);
+                    if (resp.data.organizationCertificate) {
+                        orgPackage.orgCertificate = resp.data.organizationCertificate;
+                    }
+                    packageToExport = {
+                        userPrivateKeyJwk: userPackage.privateKeyJwk,
+                        userPublicKeyPem: userPackage.publicKeyPem,
+                        userCertificate: userPackage.userCertificate,
+                        orgPrivateKeyJwk: orgPackage.privateKeyJwk,
+                        orgPublicKeyPem: orgPackage.publicKeyPem,
+                        orgCertificate: orgPackage.orgCertificate
+                    };
                 } else {
-                    setOrgKeyToExport(null);
+                    packageToExport = resp.userPackage;
                 }
+
+                setCryptoPackage(packageToExport);
+                setShowExportModal(true);
                 setMessage('Registered with great success! Verify your email to login');
             } else {
                 setMessage(resp.data.message || 'Registration failed..');
@@ -168,18 +161,6 @@ const Register = () => {
             setIsSubmitting(false);
         }
     };
-
-    const handleModalDone = () => {
-        if (packageType === 'user' && orgKeyToExport) {
-            setPackageType('org');
-            setShowExportModal(true);
-        } else {
-            setExportDone(true);
-            setPackageType(null);
-            setOrgKeyToExport(null);
-        }
-    };
-
 
     useEffect(() => {
         if (showExportModal && passwordRef.current) {
@@ -242,7 +223,7 @@ const Register = () => {
                     )}
                 </div>
                 <p style={{color: "#555", fontSize: 14, marginTop: 8}}>
-                    <b><i>Seccam {isTrustedUser ? "Premium" : "User"} Crypto-Passport™</i> at Your Service!</b>
+                    <b><i>{isTrustedUser ? "Company Premium" : "Seccam User"} Crypto-Passport™</i> at Your {isTrustedUser ? "Orders" : "Service"}!</b>
                 </p>
             </Window98>
         </div>
@@ -255,7 +236,7 @@ const Register = () => {
                 <Window98 title="SEC-CAM – Register" width={360}>
                     <form onSubmit={handleRegister}>
                         <div className="field-row-stacked" style={{width: "100%"}}>
-                            <label htmlFor="username">Pseudonym</label>
+                            <label htmlFor="username"><b>Pseudonym</b></label>
                             <input
                                 id="username"
                                 value={username}
@@ -272,7 +253,7 @@ const Register = () => {
                             {userErr && <small>{userErr}</small>}
                         </div>
                         <div className="field-row-stacked" style={{width: "100%"}}>
-                            <label htmlFor="email">Email</label>
+                            <label htmlFor="email"><b>Email</b></label>
                             <input
                                 id="email"
                                 type="email"
@@ -289,29 +270,29 @@ const Register = () => {
                                 checked={isTrustedUser}
                                 onChange={(e) => setIsTrustedUser(e.target.checked)}
                             />
-                            <label htmlFor="isTrustedUser">Representing a Company?</label>
+                            <label htmlFor="isTrustedUser">Part of a Company?</label>
                         </div>
 
                         {isTrustedUser && (
                             <>
                                 <div className="field-row-stacked" style={{width: "100%"}}>
-                                    <label htmlFor="fullName">Full Label</label>
+                                    <label htmlFor="fullName"><b>Full Name</b></label>
                                     <input
                                         id="fullName"
                                         value={fullName}
                                         onChange={(e) => {
                                             const v = e.target.value;
                                             setFullName(v);
-                                            setFullErr(FULLNAME_REGEX.test(v) ? '' : '10‑64 letters no digits');
+                                            setFullErr(FULLNAME_REGEX.test(v) ? '' : '6‑24 letters no digits');
                                         }}
-                                        pattern="[A-Za-zÀ-ÿ' ]{10,64}"
-                                        maxLength={64}
+                                        pattern="[A-Za-zÀ-ÿ' ]{6,24}"
+                                        maxLength={24}
                                         required
                                     />
                                 </div>
 
                                 <div className="field-row-stacked" style={{width: "100%"}}>
-                                    <label htmlFor="organization">Company Name</label>
+                                    <label htmlFor="organization"><b>Company Name</b></label>
                                     <input
                                         id="organization"
                                         value={organization}
@@ -327,7 +308,7 @@ const Register = () => {
                                 </div>
 
                                 <div className="field-row-stacked" style={{width: "100%"}}>
-                                    <label htmlFor="country">Country</label>
+                                    <label htmlFor="country"><b>Country</b></label>
                                     <select
                                         id="country"
                                         value={country}
@@ -335,7 +316,7 @@ const Register = () => {
                                         required
                                     >
                                         <option value="" disabled>
-                                            Select your country
+                                            Country
                                         </option>
                                         {countryList.map(({code, name}) => (
                                             <option key={code} value={code}>
@@ -352,7 +333,7 @@ const Register = () => {
                             type="submit"
                             disabled={isSubmitting || !!emailError || !!userErr || !!fullErr || !!orgErr}
                         >
-                            Register
+                            <b>Register</b>
                         </button>
                     </form>
                     {message && <p>{message}</p>}

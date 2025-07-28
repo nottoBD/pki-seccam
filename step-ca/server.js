@@ -1,6 +1,8 @@
 const express = require('express');
 const fs = require('fs');
-const {execFile, execSync} = require('child_process');
+const {execFile, execSync, exec} = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 const tmp = require('tmp');
 const crypto = require('crypto');
 const app = express();
@@ -36,26 +38,16 @@ app.post('/sign', async (req, res) => {
         const writtenCSR = fs.readFileSync(csrFile.name, 'utf8');
         console.log(`Temp file verification – Length: ${writtenCSR.length}, Match: ${writtenCSR === csr ? '✅' : '❌'}`);
 
-        let csrType = 'UNKNOWN';
-        if (csr.includes('DEVICE-CSR')) csrType = 'DEVICE (heuristic)';
-        else if (csr.includes('ORG-CSR')) csrType = 'ORGANIZATION (heuristic)';
 
         try {
             const inspect = execSync(
                 `step certificate inspect --insecure ${csrFile.name}`,
                 {encoding: 'utf-8', timeout: 5000}
             );
-
-            if (inspect.includes('DEVICE-CSR')) csrType = 'DEVICE (confirmed via step)';
-            else if (inspect.includes('ORG-CSR')) csrType = 'ORGANIZATION (confirmed via step)';
-
             console.log(`CSR Subject: ${inspect.match(/Subject:.+/)?.[0] || 'Not found'}`);
         } catch (err) {
             console.error('CSR inspection failed:', err.message);
         }
-
-        console.log(`CSR TYPE: ${csrType}`);
-
 
         const crtFile = tmp.tmpNameSync({postfix: '.crt'});
 
@@ -91,15 +83,56 @@ app.post('/sign', async (req, res) => {
     }
 });
 
+
+app.post('/verify', async (req, res) => {
+    try {
+        let { cert } = req.body;
+
+        if (typeof cert !== 'string' || !cert.includes('BEGIN CERTIFICATE')) {
+            return res.status(400).json({ error: '`cert` field with PEM certificate is required.' });
+        }
+
+        cert = cert.split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----\n';
+
+        const certFile = tmp.fileSync({ postfix: '.pem' });
+        fs.writeFileSync(certFile.name, cert);
+
+        const rootCaPath = '/home/step/certs/root_ca.crt';
+        const intermediateCaPath = '/home/step/certs/intermediate_ca.crt';
+
+        const command = `openssl verify -CAfile ${rootCaPath} -untrusted ${intermediateCaPath} ${certFile.name}`; //untrusted needed to verify a leaf issued by an intermediate.
+        const { stdout, stderr } = await execPromise(command);
+
+        if (!stdout.includes('OK')) {
+            throw new Error(`Certificate verification failed: ${stderr || 'No stderr output'}`);
+        }
+
+        // CN
+        const inspectCommand = `openssl x509 -in ${certFile.name} -noout -subject -nameopt RFC2253`;
+        const { stdout: inspectStdout } = await execPromise(inspectCommand);
+        const cnMatch = inspectStdout.match(/CN=([^,]+)/);
+        const cn = cnMatch ? cnMatch[1].trim() : null;
+
+        res.json({ valid: true, cn });
+
+        certFile.removeCallback();
+    } catch (err) {
+        console.error('VERIFY endpoint failed:', err);
+        res.status(500).json({ error: 'Certificate verification failed', detail: err.message });
+    }
+});
+
 function execStep(args) {
     return new Promise((resolve, reject) => {
         execFile('step', args, {encoding: 'utf8'}, (err, stdout, stderr) => {
-            if (err) return reject(err);
+            if (err) {
+                return reject(new Error(`Command failed: ${err.message}. Stderr: ${stderr || 'none'}. Stdout: ${stdout || 'none'}`));
+            }
             resolve({stdout, stderr});
         });
     });
 }
 
 app.listen(port, () => {
-    console.log(`▶︎ Cert-signer listening on :${port}, talking to ${STEP_CA_URL}`);
+    console.log(`▶︎ Cert-signer listening on :${port}. In communication with ${STEP_CA_URL}`);
 });

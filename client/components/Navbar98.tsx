@@ -4,6 +4,7 @@ import Link from "next/link";
 import {useEffect, useState} from "react";
 import {useRouter} from "next/navigation";
 import {pinnedFetch} from "@/cryptography/certificate";
+import {logout} from "@/handlers/auth-hdlr";
 
 
 export default function Navbar98() {
@@ -11,8 +12,8 @@ export default function Navbar98() {
     const [name, setName] = useState<string>("user");
     const router = useRouter();
 
-    const handleLogout = () => {
-        localStorage.removeItem("token");
+    const handleLogout = async () => {
+        await logout();
         router.replace("/");
     };
 
@@ -37,12 +38,13 @@ export default function Navbar98() {
                 const user = await res.json();
                 setName(user.displayName ?? user.username ?? "user");
 
+                const homeHref = user.isTrustedUser ? "/hometrusted" : "/home";
                 const nav: { href: string; label: string }[] = [
-                    {href: "/home", label: "Home"},
+                    {href: homeHref, label: "Home"},
                     {href: "/videos", label: "Videos"},
                 ];
 
-                if (user.role !== "trusteduser") {
+                if (!user.isTrustedUser) {
                     nav.push({href: "/users", label: "Users"});
                 }
 

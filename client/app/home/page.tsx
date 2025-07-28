@@ -6,7 +6,7 @@ import {useRouter} from "next/navigation";
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 
-import {logout} from "@/actions/auth";
+import {logout} from "@/handlers/auth-hdlr";
 import {encryptDatachunk, importKey,} from "@/cryptography/symmetric";
 import {base64ToArrayBuffer} from "@/cryptography/asymmetric";
 import {pinnedFetch} from "@/cryptography/certificate";
@@ -36,7 +36,7 @@ export default function HomePage() {
                 if (!res.ok) return router.replace("/");
 
                 const user = await res.json();
-                if (user.trusted) {
+                if (user.isTrustedUser) {
                     return router.replace("/hometrusted");
                 }
 

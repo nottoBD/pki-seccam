@@ -4,10 +4,10 @@ import React, {useEffect, useRef, useState} from 'react';
 import {useRouter} from 'next/navigation';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
-import {login} from '@/actions/auth';
-import {handleProfile} from "@/cryptography/handlers";
+import {login} from '@/handlers/auth-hdlr';
 import {pinnedFetch} from "@/cryptography/certificate";
-import {decryptWithPrivateKey} from "@/cryptography/asymmetric";
+import {decryptCryptoPassportLogin} from "@/cryptography/symmetric"
+import {handleAnyUserSession} from "@/handlers/crypto-hdlr";
 
 
 export default function Login() {
@@ -34,49 +34,15 @@ export default function Login() {
                 const res = await pinnedFetch('/api/user/current', {
                     headers: {Authorization: `Bearer ${t}`}
                 });
-                if (res.ok) router.push('/home');
+                if (res.ok) {
+                    const userData = await res.json();
+                    router.push(userData.isTrustedUser ? '/hometrusted' : '/home');
+                }
             } catch {
                 localStorage.removeItem('token');
             }
         })();
     }, [router]);
-
-    async function decryptPackageFile(file: File, password: string): Promise<any> {
-        const content = JSON.parse(await file.text());
-        const {salt, iv, ciphertext} = content;
-
-        if (!salt || !iv || !ciphertext) throw new Error("Malformed encrypted package.");
-
-        const decoder = new TextDecoder();
-        const keyMaterial = await crypto.subtle.importKey(
-            "raw",
-            new TextEncoder().encode(password),
-            "PBKDF2",
-            false,
-            ["deriveKey"]
-        );
-
-        const key = await crypto.subtle.deriveKey(
-            {
-                name: "PBKDF2",
-                salt: new Uint8Array(salt),
-                iterations: 250000,
-                hash: "SHA-256"
-            },
-            keyMaterial,
-            {name: "AES-GCM", length: 256},
-            false,
-            ["decrypt"]
-        );
-
-        const decrypted = await crypto.subtle.decrypt(
-            {name: "AES-GCM", iv: new Uint8Array(iv)},
-            key,
-            new Uint8Array(ciphertext)
-        );
-
-        return JSON.parse(decoder.decode(decrypted));
-    }
 
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -92,56 +58,78 @@ export default function Login() {
 
         let decryptedPackage;
         try {
-            decryptedPackage = await decryptPackageFile(cryptoFile, password);
-            if (!decryptedPackage.privateKeyJwk) {
+            decryptedPackage = await decryptCryptoPassportLogin(cryptoFile, password);
+
+            if (!decryptedPackage.privateKeyJwk && !decryptedPackage.userPrivateKeyJwk) {
                 throw new Error('Missing private key in package.');
             }
+
+            const isTrustedUser = !!decryptedPackage.userPrivateKeyJwk && !!decryptedPackage.orgPrivateKeyJwk && !!decryptedPackage.userCertificate && !!decryptedPackage.orgCertificate;
+
+            if (isTrustedUser) {
+                const rootPem = await (await pinnedFetch('/api/ca/root')).text();
+
+                const rootLines = rootPem.split('\n').filter(l => !l.startsWith('-----'));
+                const rootB64 = rootLines.join('');
+                const rootBytes = Uint8Array.from(atob(rootB64), c => c.charCodeAt(0));
+                const digest = await crypto.subtle.digest('SHA-256', rootBytes);
+                const rootFp = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('').toLowerCase();
+                if (rootFp !== process.env.NEXT_PUBLIC_CA_ROOT_FINGERPRINT) {
+                    throw new Error('Root CA certificate fingerprint mismatch. Potential MITM attack.');
+                }
+
+                const userVerifyResp = await pinnedFetch('/api/ca/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cert: decryptedPackage.userCertificate }),
+                });
+                const userVerifyData = await userVerifyResp.json();
+                if (!userVerifyResp.ok || !userVerifyData.valid) {
+                    throw new Error('User certificate chain verification failed.');
+                }
+                console.log('DEBUG: userVerifyData (from backend):', userVerifyData);
+                console.log('DEBUG: userVerifyData.cn:', userVerifyData.cn);
+                console.log('DEBUG: username field:', username, 'typeof:', typeof username, 'length:', username.length);
+                console.log('DEBUG: CN field:', userVerifyData.cn, 'typeof:', typeof userVerifyData.cn, 'length:', (userVerifyData.cn || '').length);
+                console.log('DEBUG: compare result:', userVerifyData.cn === username);
+
+                if (userVerifyData.cn !== username) {
+                    throw new Error('User certificate CN does not match username.');
+                }
+                const orgVerifyResp = await pinnedFetch('/api/ca/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cert: decryptedPackage.orgCertificate }),
+                });
+                const orgVerifyData = await orgVerifyResp.json();
+                if (!orgVerifyResp.ok || !orgVerifyData.valid) {
+                    throw new Error('Organization certificate chain verification failed.');
+                }
+            }
         } catch (err: any) {
+            console.error('Package decryption or cert verification failed:', err);
             setMessage("Invalid password or corrupted package: " + err.message);
             setIsSubmitting(false);
             return;
         }
 
         // login w/ username, TOTP, decrypted package
-        const loginResp = await login(username, code, decryptedPackage);
+        const loginResp = await login(username, code);
         if (loginResp.status === 200 && loginResp.token) {
             localStorage.setItem('token', loginResp.token);
 
             try {
-                const currentRes = await pinnedFetch('/api/user/current', {
+                const res = await pinnedFetch('/api/user/current', {
                     headers: {Authorization: `Bearer ${loginResp.token}`}
                 });
-                if (!currentRes.ok) throw new Error('Profile retrieval failed after login.');
-                const userData = await currentRes.json();
+                if (!res.ok) throw new Error('Profile retrieval failed after login.');
+                const userData = await res.json();
 
-                await handleProfile(userData, decryptedPackage, (msg) => setMessage(msg));
-
-                // symmK set if not normal user
                 if (!userData.isTrustedUser) {
-                    const symKeyResponse = await pinnedFetch("/api/user/getSymmetric", {
-                        headers: {Authorization: `Bearer ${loginResp.token}`},
-                    });
-                    const symKeyData = await symKeyResponse.json();
-                    const encryptedSymmetricKey = symKeyData.encryptedSymmetricKey;
-
-                    // Import private key from JWK
-                    const importedPrivateKey = await crypto.subtle.importKey(
-                        "jwk",
-                        decryptedPackage.privateKeyJwk,
-                        {
-                            name: "RSA-OAEP",
-                            hash: "SHA-256",
-                        },
-                        false,
-                        ["decrypt"]
-                    );
-
-                    //  decrypt & store ba64 symmetric key in session
-                    const symmetricKeyBase64 = await decryptWithPrivateKey(encryptedSymmetricKey, importedPrivateKey);
-                    sessionStorage.setItem('symmK', symmetricKeyBase64);
+                    await handleAnyUserSession(userData, decryptedPackage, (msg) => setMessage(msg));
                 }
 
-                router.push('/home');
+                router.push(userData.isTrustedUser ? '/hometrusted' : '/home');
             } catch (err) {
                 setMessage('Post-login error: unable to complete profile setup.');
             }
@@ -171,7 +159,7 @@ export default function Login() {
                 <Window98 title="SEC-CAM – Entrance" width={360}>
                     <form onSubmit={handleSubmit}>
                         <div className="field-row-stacked" style={{width: "100%"}}>
-                            <label htmlFor="user">Pseudonym</label>
+                            <label htmlFor="user"><b>Pseudonym</b></label>
                             <input
                                 id="user"
                                 value={username}
@@ -183,22 +171,8 @@ export default function Login() {
                             />
 
                         </div>
-
-                        <div className="field-row-stacked" style={{width: "100%"}}>
-                            <label htmlFor="totp">TOTP Code</label>
-                            <input
-                                id="totp"
-                                type="text"
-                                inputMode="numeric"
-                                pattern="\d{6}"
-                                maxLength={6}
-                                value={code}
-                                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                                required
-                            />
-                        </div>
                         <div className="field-row-stacked">
-                            <label htmlFor="cryptoFile">Crypto Package (.sec.json)</label>
+                            <label htmlFor="cryptoFile"><b>Crypto Passport</b></label>
                             <input
                                 id="cryptoFile"
                                 type="file"
@@ -208,12 +182,25 @@ export default function Login() {
                             />
                         </div>
                         <div className="field-row-stacked">
-                            <label htmlFor="password">Package Password</label>
+                            <label htmlFor="password"><b>Package Password</b></label>
                             <input
                                 id="password"
                                 type="password"
                                 value={password}
                                 onChange={e => setPassword(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="field-row-stacked" style={{width: "100%"}}>
+                            <label htmlFor="totp"><b>TOTP Code</b></label>
+                            <input
+                                id="totp"
+                                type="text"
+                                inputMode="numeric"
+                                pattern="\d{6}"
+                                maxLength={6}
+                                value={code}
+                                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                                 required
                             />
                         </div>
@@ -228,7 +215,7 @@ export default function Login() {
                     </form>
                     {message && <p>{message}</p>}
                     <p style={{marginTop: 8}}>
-                        Register instead? <a href="/register">Sign up</a>
+                        <a href="/register">Register</a> instead?
                     </p>
                 </Window98>
             </main>

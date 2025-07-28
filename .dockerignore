@@ -19,6 +19,7 @@ doc/
 **/*.key
 **/*.pem
 **/*.crt
+**/*.sec.json
 **/secrets/*
 !step-ca/secrets/*
 **/.next

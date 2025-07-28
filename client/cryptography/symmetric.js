@@ -36,6 +36,43 @@ export async function encryptCryptoPassportRegistration(json, password) {
     return blob;
 }
 
+export async function decryptCryptoPassportLogin(file, password){
+    const content = JSON.parse(await file.text());
+    const {salt, iv, ciphertext} = content;
+
+    if (!salt || !iv || !ciphertext) throw new Error("Malformed encrypted package.");
+
+    const decoder = new TextDecoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(password),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+    );
+
+    const key = await crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt: new Uint8Array(salt),
+            iterations: 250000,
+            hash: "SHA-256"
+        },
+        keyMaterial,
+        {name: "AES-GCM", length: 256},
+        false,
+        ["decrypt"]
+    );
+
+    const decrypted = await crypto.subtle.decrypt(
+        {name: "AES-GCM", iv: new Uint8Array(iv)},
+        key,
+        new Uint8Array(ciphertext)
+    );
+
+    return JSON.parse(decoder.decode(decrypted));
+}
+
 export const exportCryptoKeyAsBase64 = async (key) => {
     const raw = await window.crypto.subtle.exportKey('raw', key);
     return arrayBufferToBase64(raw)

@@ -84,7 +84,18 @@ openssl x509 -in "$ROOT"/step-root.pem -noout -text | grep -E 'Issuer:|Subject:|
 sleep 1
 
 say "👉  Inspecting fullchain.crt inside step-ca container:"
-docker exec step-ca step certificate inspect /home/step/leaf/server.fullchain.crt
+docker exec step-ca sh -c '
+  awk -v n=1 "/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/ {print > \"/tmp/cert\" n \".pem\"; if (/-----END CERTIFICATE-----/) n++}" /home/step/leaf/server.fullchain.crt
+  for f in /tmp/cert1.pem /tmp/cert2.pem; do
+    if [ -f "$f" ]; then
+      echo "Certificate $(basename "$f"):"
+      step certificate inspect "$f"
+    else
+      echo "Error: $f not found"
+    fi
+  done
+  rm -f /tmp/cert*.pem
+'
 sleep 2
 
 c_rehash "$ROOTS_DIR"
@@ -102,7 +113,7 @@ say "👉  Mailpit Leaf-cert testing email:"
   bash -c "
   curl -s -X POST https://localhost:3443/mailpit/api/v1/send \
     --cert-type P12 \
-    --cert "${P12_BUNDLE}:"${P12_PASS}"" \
+    --cert ""${P12_BUNDLE}":"${P12_PASS}"" \
     --cacert ./step-root.pem \
     -H 'Content-Type: application/json' \
     -d '{\"From\":{\"Email\":\"bob@seccam.be\"},\"To\":[{\"Email\":\"david.botton@ulb.be\"}],\"Subject\":\"Mailpit Security Posture\",\"Text\":\"Here is Mailpit UI, with its own Step‑CA signed leaf certificate, Web UI & REST API are served only over HTTPS on 3025, mTLS is enforced everywhere in the network starting at nginx, TLS handshakes are fully verified. SMTP listens on 1025 with STARTTLS required, advertising the same certificate, so NodeMailer refuses to downgrade TLS. Certificate pinning is enabled on every request client to server (cfr. X-Server-Cert field). All on‑wire traffic is encrypted and MITM-proof within the limits of the Docker network.\"}' && printf 'You have received an email at Mailpit!'

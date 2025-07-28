@@ -4,7 +4,7 @@ import React, {useEffect} from "react";
 import {useRouter} from "next/navigation";
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
-import {logout} from "@/actions/auth";
+import {logout} from "@/handlers/auth-hdlr";
 import {pinnedFetch} from "@/cryptography/certificate";
 
 
@@ -28,7 +28,8 @@ const HomePage = () => {
 
                 const p = parseJWT(token);
                 if (!p || (p.exp && p.exp * 1000 < Date.now())) {
-                    await handleLogout();
+                    await logout();
+                    router.push('/');
                     return;
                 }
 
@@ -39,19 +40,17 @@ const HomePage = () => {
                 if (response.ok) {
                     router.push('/home');
                 } else {
-                    await handleLogout();
+                    await logout();
+                    router.push('/');
                 }
             } catch (error) {
                 console.error('Error verifying authentication:', error);
-                await handleLogout();
+                await logout();
+                router.push('/');
             }
         })();
     }, []);
 
-    const handleLogout = async () => {
-        await logout();
-        router.push('/');
-    };
 
     return (
         <>

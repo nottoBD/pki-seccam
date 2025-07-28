@@ -13,7 +13,7 @@ const transporter = nodemailer.createTransport({
 });
 
 exports.sendVerificationMail = (to, username, token) => {
-    const link = `${process.env.APP_BASE_URL || 'https://localhost:3443'}/verify-email?` +
+    const link = `${process.env.NEXT_PUBLIC_API_ORIGIN}/verify-email?` +
         `token=${token}&username=${encodeURIComponent(username)}`;
 
     return transporter.sendMail({

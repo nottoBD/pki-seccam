@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
 RUN set -eux; \
-    apk add --no-cache curl gnupg ca-certificates; \
+    apk add --no-cache curl gnupg ca-certificates openssl; \
     curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apk/keys/smallstep.asc; \
     echo "https://packages.smallstep.com/stable/alpine/edge/main" >> /etc/apk/repositories; \
     apk add --no-cache step-cli

@@ -1,6 +1,5 @@
 import forge from 'node-forge';
 import {getOrCreateUserKeypair} from './asymmetric';
-import {saveOrgKeyPair} from "@/utils/idb-util";
 
 
 /* cache successful pins */
@@ -20,26 +19,24 @@ const pinnedFingerprint =
     (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT) ||
     '';
 
-
-export async function buildUserCSR(username, deviceName = 'Web Browser') {
+export async function buildUserCSR(username) {
     const {publicKeyPem, privateKey, privateJwk} = await getOrCreateUserKeypair(username);
 
     const csr = forge.pki.createCertificationRequest();
     csr.publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
     csr.setSubject([
         {name: 'commonName', value: username},
-        {name: 'organizationalUnitName', value: safe(deviceName)},
     ]);
 
     const criAsn1 = forge.pki.getCertificationRequestInfo(csr);
     const criDerStr = forge.asn1.toDer(criAsn1).getBytes();
     const criU8 = Uint8Array.from(criDerStr, ch => ch.charCodeAt(0));
-    const digest = await crypto.subtle.digest('SHA-256', criU8);
+
     const sigU8 = new Uint8Array(
         await crypto.subtle.sign(
             'RSASSA-PKCS1-v1_5',
             privateKey,
-            digest
+            criU8
         )
     );
 
@@ -51,27 +48,37 @@ export async function buildUserCSR(username, deviceName = 'Web Browser') {
     return {csrPem, publicKeyPem, privateJwk};
 }
 
-
 export async function buildOrganizationCSR(fullname, organization, country) {
     const orgKey = `${organization.trim()}_${country.trim()}`; // Unique key for org+country
 
-    const {publicKeyPem: pubPem, privPem} = await getOrCreateUserKeypair(orgKey);
-
-    const publicKey = forge.pki.publicKeyFromPem(pubPem);
-    const privateKey = forge.pki.privateKeyFromPem(privPem);
-
-    await saveOrgKeyPair(orgKey, jwk, pubPem);
+    const {publicKeyPem, privateKey, privateJwk} = await getOrCreateUserKeypair(orgKey);
 
     const csr = forge.pki.createCertificationRequest();
-    csr.publicKey = publicKey;
+    csr.publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
     csr.setSubject([
         {name: 'commonName', value: fullname},
         {name: 'organizationName', value: organization},
         {name: 'countryName', value: country}
     ]);
-    csr.sign(privateKey, forge.md.sha256.create());
 
-    return forge.pki.certificationRequestToPem(csr);
+    const criAsn1 = forge.pki.getCertificationRequestInfo(csr);
+    const criDerStr = forge.asn1.toDer(criAsn1).getBytes();
+    const criU8 = Uint8Array.from(criDerStr, ch => ch.charCodeAt(0));
+
+    const sigU8 = new Uint8Array(
+        await crypto.subtle.sign(
+            'RSASSA-PKCS1-v1_5',
+            privateKey,
+            criU8  //raw TBSCSR
+        )
+    );
+
+    csr.signatureOid = forge.pki.oids.sha256WithRSAEncryption;
+    csr.signature = String.fromCharCode(...sigU8);
+
+    const csrPem = forge.pki.certificationRequestToPem(csr);
+
+    return {csrPem, publicKeyPem, privateJwk};
 }
 
 
@@ -87,10 +94,8 @@ export async function verifyPinnedCertificate(path) {
         return false;
     }
 
-    // cached result
     if (lastCheckOK && Date.now() - lastCheckTs < TEN_MIN) return true;
 
-    /* strip remote origin so the call is always same‑origin */
     const url = new URL(path, window.location.origin);
     const headResp = await fetch(url.pathname, {method: 'HEAD'});
 

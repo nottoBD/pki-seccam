@@ -50,13 +50,13 @@ export default function VerifyEmail() {
                         {msg.startsWith('✅') && !closedMsgVisible && (
                             <p>
                                 <button onClick={handleClose}>
-                                    Close this tab and return to the app
+                                    OK
                                 </button>
                             </p>
                         )}
 
                         {closedMsgVisible && (
-                            <p>You can safely close this tab now.</p>
+                            <p>You can safely login now.</p>
                         )}
                     </Window98>
                 </Suspense>

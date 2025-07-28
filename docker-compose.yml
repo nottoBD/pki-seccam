@@ -62,6 +62,7 @@ services:
       TLS_CERT_PATH: /tls/server.crt
       TLS_KEY_PATH: /tls/server.key
       NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT: ${NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT}
+      NEXT_PUBLIC_CA_ROOT_FINGERPRINT: ${NEXT_PUBLIC_CA_ROOT_FINGERPRINT}
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
     depends_on:
       - server
@@ -96,6 +97,7 @@ services:
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
       DB_URL: ${DB_URL}
       TOTP_KEY: ${TOTP_KEY}
+      NEXT_PUBLIC_API_ORIGIN: ${NEXT_PUBLIC_API_ORIGIN}
     depends_on:
       mongodb:
         condition: service_healthy

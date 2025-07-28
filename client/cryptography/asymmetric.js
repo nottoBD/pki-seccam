@@ -1,4 +1,3 @@
-import {getUserKeyPackage, saveUserKeyPackage,} from '@/utils/idb-util';
 
 export const arrayBufferToBase64 = (buffer) => {
     const bytes = new Uint8Array(buffer);
@@ -17,58 +16,35 @@ export const base64ToArrayBuffer = (base64) => {
     return bytes.buffer;
 };
 
-
 export async function getOrCreateUserKeypair(username) {
-    let keyPackage = await getUserKeyPackage(username);
+    const {publicKey, privateKey: pk} = await crypto.subtle.generateKey(
+        {
+            name: 'RSASSA-PKCS1-v1_5',
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: 'SHA-256',
+        },
+        true,
+        ['sign', 'verify']
+    );
 
-    let privateKey, publicKeyPem, privateJwk = null;
+    let privateJwk = await crypto.subtle.exportKey("jwk", pk);
+    delete privateJwk.alg;
+    delete privateJwk.key_ops;
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', publicKey));
+    const b64 = btoa(String.fromCharCode(...spki));
+    let publicKeyPem =
+        '-----BEGIN PUBLIC KEY-----\n' +
+        b64.match(/.{1,64}/g).join('\n') +
+        '\n-----END PUBLIC KEY-----';
 
-    if (keyPackage && keyPackage.privateJwk && keyPackage.publicKeyPem) {
-        privateKey = await crypto.subtle.importKey(
-            "jwk",
-            keyPackage.privateJwk,
-            {name: "RSASSA-PKCS1-v1_5", hash: "SHA-256"},
-            false,
-            ["sign"]
-        );
-        publicKeyPem = keyPackage.publicKeyPem;
-    }
-
-    if (!privateKey || !publicKeyPem) {
-        // Generate new key pair with extractable: true
-        const {publicKey, privateKey: pk} = await crypto.subtle.generateKey(
-            {
-                name: 'RSASSA-PKCS1-v1_5',
-                modulusLength: 2048,
-                publicExponent: new Uint8Array([1, 0, 1]),
-                hash: 'SHA-256',
-            },
-            true,
-            ['sign', 'verify']
-        );
-
-        privateJwk = await crypto.subtle.exportKey("jwk", pk);
-        delete privateJwk.alg;
-        delete privateJwk.key_ops;
-        const spki = new Uint8Array(await crypto.subtle.exportKey('spki', publicKey));
-        const b64 = btoa(String.fromCharCode(...spki));
-        publicKeyPem =
-            '-----BEGIN PUBLIC KEY-----\n' +
-            b64.match(/.{1,64}/g).join('\n') +
-            '\n-----END PUBLIC KEY-----';
-
-        // Save in IDB
-        await saveUserKeyPackage(username, {privateJwk, publicKeyPem});
-
-        // Re-import private key as non-extractable for return
-        privateKey = await crypto.subtle.importKey(
-            "jwk",
-            privateJwk,
-            {name: "RSASSA-PKCS1-v1_5", hash: "SHA-256"},
-            false,
-            ["sign"]
-        );
-    }
+    let privateKey = await crypto.subtle.importKey(
+        "jwk",
+        privateJwk,
+        {name: "RSASSA-PKCS1-v1_5", hash: "SHA-256"},
+        false,
+        ["sign"]
+    );
 
     return {publicKeyPem, privateKey, privateJwk};
 }

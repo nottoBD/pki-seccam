@@ -53,7 +53,7 @@ const server = https.createServer(ssl, app);
 
 
 app.use('/api/user', require('./routes/user-route'));
-app.use('/api/organizations', require('./routes/organization-route'));
+app.use('/api/ca', require('./routes/ca-route'));
 app.use('/api/video', require('./routes/video-route'));
 
 app.post('/stream', require('./controllers/video-ctrl').uploadChunk);

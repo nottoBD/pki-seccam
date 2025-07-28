@@ -6,4 +6,5 @@ node_modules/
 **/*.bak
 **/*.txt
 **/*.log
+**/*.sec.json
 /pki/roots/*.0
