@@ -36,7 +36,7 @@ export default function Login() {
                 });
                 if (res.ok) {
                     const userData = await res.json();
-                    router.push(userData.isTrustedUser ? '/hometrusted' : '/home');
+                    router.push(userData.isTrustedUser ? '/home-trust' : '/home');
                 }
             } catch {
                 localStorage.removeItem('token');
@@ -129,7 +129,7 @@ export default function Login() {
                     await handleAnyUserSession(userData, decryptedPackage, (msg) => setMessage(msg));
                 }
 
-                router.push(userData.isTrustedUser ? '/hometrusted' : '/home');
+                router.push(userData.isTrustedUser ? '/home-trust' : '/home');
             } catch (err) {
                 setMessage('Post-login error: unable to complete profile setup.');
             }

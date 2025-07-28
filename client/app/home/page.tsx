@@ -37,7 +37,7 @@ export default function HomePage() {
 
                 const user = await res.json();
                 if (user.isTrustedUser) {
-                    return router.replace("/hometrusted");
+                    return router.replace("/home-trust");
                 }
 
                 setName(user.username);
@@ -151,7 +151,7 @@ export default function HomePage() {
                             chunkSize: ev.data.size,
                         })
                     );
-                    await pinnedFetch("/stream", {
+                    await pinnedFetch("/api/video/streaming", {
                         method: "POST",
                         body: payload,
                         headers: {Authorization: `Bearer ${token}`},

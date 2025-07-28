@@ -98,6 +98,11 @@ services:
       DB_URL: ${DB_URL}
       TOTP_KEY: ${TOTP_KEY}
       NEXT_PUBLIC_API_ORIGIN: ${NEXT_PUBLIC_API_ORIGIN}
+      STEP_CA_URL: https://step-ca:9000
+      STEP_ROOT: /ca/certs/root_ca.crt
+      STEP_INTERMEDIATE: /ca/certs/intermediate_ca.crt
+      STEP_PROVISIONER: seccam-provisioner
+      STEP_PASSWORD_FILE: /ca/secrets/password
     depends_on:
       mongodb:
         condition: service_healthy
@@ -185,28 +190,6 @@ services:
       interval: 5s
       retries: 15
       start_period: 5s
-    networks:
-      - secnet
-
-  cert-signer:
-    build:
-      context: ./step-ca
-      dockerfile: ./Dockerfile
-    image: seccam-cert-signer
-    container_name: cert-signer
-    restart: unless-stopped
-    environment:
-      CHAIN_PEM_PATH: /etc/ssl/certs/clients_ca_chain.pem
-      STEP_CA_URL: https://step-ca:9000
-      STEP_ROOT: /home/step/certs/root_ca.crt
-      STEP_PROVISIONER: "seccam-provisioner"
-      STEP_PASSWORD_FILE: /home/step/secrets/password
-    volumes:
-      - stepca-data:/home/step:rw
-      - ./pki/leafs:/certs:ro
-      - ./pki/roots/clients_ca_chain.pem:/etc/ssl/certs/clients_ca_chain.pem:ro
-    depends_on:
-      - step-ca
     networks:
       - secnet
 

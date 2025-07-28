@@ -1,18 +1,33 @@
 require("dotenv").config();
 const crypto = require("crypto");
 const fs = require("fs");
-const axios = require("axios");
 const jwt = require("jsonwebtoken");
 const qrcode = require("qrcode");
 const speakeasy = require("speakeasy");
 const User = require("../models/user");
-const TrustedUser = require("../models/trusteduser");
-const Videos = require("../models/videos");
+const TrustedUser = require("../models/usertrusted");
+const Videos = require("../models/video");
 const logger = require("../logging/logger");
 const Organization = require('../models/organization');
 const {getSerialNumber} = require('../utils/x509');
 const {sendVerificationMail} = require('../utils/mailer');
+const caCtrl = require('./ca-ctrl');
 
+const listTrustedUsers = async (req, res) => {
+    try {
+        const { username } = req.user;
+        const user = await User.findOne({ username });
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        if (req.user.trusted) return res.status(403).json({ message: 'Only for non-trusted users' });
+
+        // trusted users w/ id username certificate
+        const trustedUsers = await TrustedUser.find({}).select('_id username certificate');
+        res.json(trustedUsers);
+    } catch (err) {
+        logger.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
 
 const getUserSymmetric = async (req, res) => {
     try {
@@ -112,11 +127,8 @@ const registerUser = async (req, res) => {
             let orgCertPem = null, serial = null;
 
             if (body.orgCsr) {
-                const {data: orgCertResp} = await axios.post(
-                    'http://cert-signer:3001/sign',
-                    {csr: body.orgCsr}
-                );
-                orgCertPem = orgCertResp.certificate;
+                const {certificate: orgCertResp} = await caCtrl.signCertificate({csr: body.orgCsr});
+                orgCertPem = orgCertResp;
                 fs.writeFileSync(orgCertPath, orgCertPem, 'utf8');
                 serial = getSerialNumber(orgCertPem);
             }
@@ -138,8 +150,8 @@ const registerUser = async (req, res) => {
             const qrcode_image = await qrcode.toDataURL(secret.otpauth_url);
 
             // sign user csr
-            const {data: certResp} = await axios.post("http://cert-signer:3001/sign", {csr: trustedUserCsr});
-            const userCertPem = certResp.certificate;
+            const {certificate: certResp} = await caCtrl.signCertificate({csr: trustedUserCsr});
+            const userCertPem = certResp;
             const userCertPath = `/certs/${body.username}.crt.pem`;
             fs.writeFileSync(userCertPath, userCertPem, 'utf8');
 
@@ -153,17 +165,18 @@ const registerUser = async (req, res) => {
             const trusted = await TrustedUser.create({
                 username: body.username,
                 hmac_username: body.hmac_username,
-
                 email: body.email,
                 hmac_email: body.hmac_email,
                 fullname: body.fullname,
                 hmac_fullname: body.hmac_fullname,
 
                 organization: org._id,
-
                 encrypted_symmetric_key: body.encrypted_symmetric_key,
                 encrypted_hmac_key: body.encrypted_hmac_key,
                 public_key: body.public_key,
+
+                certificate: userCertPem,
+                org_certificate: orgCertPem,
                 secret: encryptForServer(secret.base32),
                 verification_token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
                 verification_token_expires: Date.now() + 24 * 60 * 60 * 1000,
@@ -289,4 +302,4 @@ const verifyUserEmail = async (req, res) => {
 };
 
 
-module.exports = {registerUser, loginUser, currentUser, verifyUserEmail, getUserSymmetric};
+module.exports = {registerUser, loginUser, currentUser, verifyUserEmail, getUserSymmetric, listTrustedUsers};

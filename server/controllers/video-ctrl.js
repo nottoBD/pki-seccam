@@ -1,8 +1,7 @@
 const decryptJWT = require('../middleware/jwt-decrypt');
-const VideoChunk = require('../models/chunk');
-const Video = require('../models/videos');
-const TrustedUser = require('../models/trusteduser');
-const SharedKeys = require('../models/shared-keys');
+const VideoChunk = require('../models/videochunk');
+const Video = require('../models/video');
+const TrustedUser = require('../models/usertrusted');
 const logger = require('../logging/logger');
 
 function getUsername(req) {
@@ -96,49 +95,6 @@ exports.listChunks = async (req, res) => {
 
         if (!chunks.length) return res.status(404).send('No chunks');
         res.json(chunks.map(c => ({chunk: c.chunk, metadata: [c.metadata]})));
-    } catch (err) {
-        logger.error(err.message);
-        res.status(500).send('Internal Server Error');
-    }
-};
-
-exports.shareWithTrusted = async (req, res) => {
-    try {
-        const username = getUsername(req);
-        const {trusted_user, encrypted_symmetric_key} = req.body;
-
-        await SharedKeys.create({
-            username: trusted_user,
-            regular_username: username,
-            encrypted_symmetric_key,
-        });
-        res.json({message: `Videos shared with ${trusted_user}`});
-    } catch (err) {
-        logger.error(err.message);
-        res.status(500).send('Internal Server Error');
-    }
-};
-
-exports.listSharedWithOrganisation = async (req, res) => {
-    try {
-        const tuUsername = getUsername(req);
-        const tu = await TrustedUser.findOne({username: tuUsername});
-        if (!tu?.organization) return res.status(404).send('Organisation not found');
-
-        const shared = await SharedKeys.find({organization: tu.organization});
-        const payload = [];
-
-        for (const sk of shared) {
-            const doc = await Video.findOne({username: sk.regular_username});
-            if (!doc) continue;
-            payload.push({
-                username: sk.regular_username,
-                videos: doc.videos.map(v => ({name: v.videoName})),
-                encrypted_symmetric_key: sk.encrypted_symmetric_key,
-            });
-        }
-
-        res.json(payload);
     } catch (err) {
         logger.error(err.message);
         res.status(500).send('Internal Server Error');

@@ -10,7 +10,7 @@ import {pinnedFetch} from "@/cryptography/certificate";
 import {getSessionKeys} from "@/utils/session-util";
 
 
-export default function VideoPage() {
+export default function PlaybackPage() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isTrustedUser, setIsTrustedUser] = useState(false);
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);

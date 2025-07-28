@@ -38,10 +38,10 @@ export default function Navbar98() {
                 const user = await res.json();
                 setName(user.displayName ?? user.username ?? "user");
 
-                const homeHref = user.isTrustedUser ? "/hometrusted" : "/home";
+                const homeHref = user.isTrustedUser ? "/home-trust" : "/home";
                 const nav: { href: string; label: string }[] = [
                     {href: homeHref, label: "Home"},
-                    {href: "/videos", label: "Videos"},
+                    {href: "/playback", label: "Videos"},
                 ];
 
                 if (!user.isTrustedUser) {

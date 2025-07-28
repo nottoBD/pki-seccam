@@ -98,8 +98,6 @@ docker exec step-ca sh -c '
 '
 sleep 2
 
-c_rehash "$ROOTS_DIR"
-
 say "👉  Inspecting TLS handshake:"
 curl -v --capath "$ROOTS_DIR" \
            --cert-type P12 --cert "${P12_BUNDLE}:${P12_PASS}" \

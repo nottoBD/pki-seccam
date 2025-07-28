@@ -16,6 +16,8 @@ const trustedUserSchema = new mongoose.Schema({
     verification_token_hash: {type: String},
     verification_token_expires: {type: Date},
 
+    certificate: {type: String, required: true},
+    org_certificate: {type: String, required: true},
     organization: {type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true},
 });
 

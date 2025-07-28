@@ -7,12 +7,50 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const multer = require('multer');
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 
 const logger = require('./logging/logger');
 
 const app = express();
 const PORT = 8888;
 const upload = multer({storage: multer.memoryStorage()});
+
+
+const swaggerOptions = {
+    definition: {
+        openapi: '3.0.0',
+        info: {
+            title: 'PKI Seccam API',
+            version: '1.0.0',
+            description: 'Secure backend API for PKI-enabled camera system with certificate management, user authentication, and video streaming.',
+            contact: {
+                name: 'Your Project Team',
+            },
+            servers: [
+                {
+                    url: `https://localhost:${PORT}`,
+                    description: 'Local development server',
+                },
+            ],
+        },
+        components: {
+            securitySchemes: {
+                cookieAuth: {
+                    type: 'apiKey',
+                    in: 'cookie',
+                    name: 'token',
+                },
+            },
+        },
+        security: [{ cookieAuth: [] }],
+    },
+    apis: ['./routes/*.js', './controllers/*.js', './server.js'],
+};
+
+const swaggerSpecs = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+
 
 mongoose.connect(process.env.DB_URL)
     .then(() => logger.info(`Connected to DB → ${process.env.DB_URL}`))
@@ -56,9 +94,23 @@ app.use('/api/user', require('./routes/user-route'));
 app.use('/api/ca', require('./routes/ca-route'));
 app.use('/api/video', require('./routes/video-route'));
 
-app.post('/stream', require('./controllers/video-ctrl').uploadChunk);
 
-
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: Health check endpoint
+ *     description: Returns a simple message indicating the server is healthy.
+ *     security: []  # No auth required
+ *     responses:
+ *       200:
+ *         description: Server is healthy
+ *         content:
+ *           text/plain:
+ *             schema:
+ *               type: string
+ *               example: HTTPS Backend Healthy!
+ */
 app.get('/', (_, res) => res.send('HTTPS Backend Healthy!'));
 
 
