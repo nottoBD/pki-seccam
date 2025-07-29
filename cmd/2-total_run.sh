@@ -11,9 +11,6 @@ ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${ROOT}/.env"
 ROOTS_DIR="$ROOT/pki/roots"
 P12_PASS=$(grep -E '^BROWSER_P12_PASSWORD=' "$ENV_FILE" | cut -d= -f2)
-
-CLIENT_CERT="$ROOT/pki/leafs/browser/${USER_ID}.fullchain.crt"
-CLIENT_KEY="$ROOT/pki/leafs/browser/${USER_ID}.key"
 P12_BUNDLE="$ROOT/pki/leafs/browser/${USER_ID}.p12"
 
 # detect compose implementation
