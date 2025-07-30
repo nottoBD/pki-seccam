@@ -209,8 +209,10 @@ export const generateMAC = async (message, key) => {
 };
 
 export const verifyMAC = async (message, mac, key) => {
+    if (!mac) throw new Error('Missing MAC');
     const enc = new TextEncoder();
-    const messageBuffer = enc.encode(message);
+    const msg = (typeof message === 'string') ? message : JSON.stringify(message);
+    const messageBuffer = enc.encode(msg);
     const macBuffer = base64ToArrayBuffer(mac);
 
     const isValid = await window.crypto.subtle.verify(

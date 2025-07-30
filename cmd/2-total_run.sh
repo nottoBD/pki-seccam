@@ -74,13 +74,12 @@ function run_compose() {
 run_compose up -d --build;
 
 say "Waiting for containers to initialize..."
-sleep 2
 
 say "👉  Inspecting self-signed root cert:"
 openssl x509 -in "$ROOT"/step-root.pem -noout -text | grep -E 'Issuer:|Subject:|Self-signed'
-sleep 1
 
 say "👉  Inspecting fullchain.crt inside step-ca container:"
+sleep 2
 docker exec step-ca sh -c '
   awk -v n=1 "/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/ {print > \"/tmp/cert\" n \".pem\"; if (/-----END CERTIFICATE-----/) n++}" /home/step/leaf/server.fullchain.crt
   for f in /tmp/cert1.pem /tmp/cert2.pem; do
@@ -93,13 +92,12 @@ docker exec step-ca sh -c '
   done
   rm -f /tmp/cert*.pem
 '
-sleep 2
 
 say "👉  Inspecting TLS handshake:"
+sleep 2
 curl -v --capath "$ROOTS_DIR" \
            --cert-type P12 --cert "${P12_BUNDLE}:${P12_PASS}" \
            https://localhost:3443/ -o /dev/null
-sleep 1
 
 printf "\n"
 printf "\n"
@@ -111,7 +109,7 @@ say "👉  Mailpit Leaf-cert testing email:"
     --cert ""${P12_BUNDLE}":"${P12_PASS}"" \
     --cacert ./step-root.pem \
     -H 'Content-Type: application/json' \
-    -d '{\"From\":{\"Email\":\"bob@seccam.be\"},\"To\":[{\"Email\":\"david.botton@ulb.be\"}],\"Subject\":\"Mailpit Security Posture\",\"Text\":\"Here is Mailpit UI, with its own Step‑CA signed leaf certificate, Web UI & REST API are served only over HTTPS on 3025, mTLS is enforced everywhere in the network starting at nginx, TLS handshakes are fully verified. SMTP listens on 1025 with STARTTLS required, advertising the same certificate, so NodeMailer refuses to downgrade TLS. Certificate pinning is enabled on every request client to server (cfr. X-Server-Cert field). All on‑wire traffic is encrypted and MITM-proof within the limits of the Docker network.\"}' && printf 'You have received an email at Mailpit!'
+    -d '{\"From\":{\"Email\":\"admin@seccam.be\"},\"To\":[{\"Email\":\"user@seccam.be\"}],\"Subject\":\"Mailpit Security Posture\",\"Text\":\"Here is Mailpit UI, with its own Step‑CA signed leaf certificate, Web UI & REST API are served only over HTTPS on 3025, mTLS is enforced everywhere in the network starting at nginx, TLS handshakes are fully verified. SMTP listens on 1025 with STARTTLS required, advertising the same certificate, so NodeMailer refuses to downgrade TLS. Certificate pinning is enabled on every request client to server (cfr. X-Server-Cert field). All on‑wire traffic is encrypted and MITM-proof within the limits of the Docker network.\"}' && printf 'You have received an email at Mailpit!'
   "
 
 printf "\n\n Enjoy. \n"

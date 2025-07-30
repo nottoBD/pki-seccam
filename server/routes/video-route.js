@@ -3,6 +3,9 @@ const video = require('../controllers/video-ctrl');
 
 const r = Router();
 
+
+r.get('/trustedList', video.trustedList);
+
 /**
  * @swagger
  * /api/video/list:

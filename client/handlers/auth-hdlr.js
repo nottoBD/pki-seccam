@@ -1,6 +1,7 @@
 import {pinnedFetch} from '@/cryptography/certificate';
 import {handleRegistration} from '@/handlers/crypto-hdlr';
 import {clearSessionKeys} from '@/utils/session-util';
+import {clearCryptoPackage} from "@/utils/transient-util";
 
 const cfg = {headers: {'Content-Type': 'application/json'}};
 
@@ -43,6 +44,7 @@ export async function logout() {
         return {status: err.status || 500, message: err.message || "Logout error"};
     } finally {
         localStorage.removeItem("token");
+        clearCryptoPackage();
         clearSessionKeys();
     }
 }

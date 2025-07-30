@@ -31,44 +31,78 @@ const listTrustedUsers = async (req, res) => {
 
 const getUserSymmetric = async (req, res) => {
     try {
-        const {username} = req.user;
+        const { username } = req.user || {};
+        let effectiveUsername = username;
+        if (!effectiveUsername) {
+            const decryptJWT = require('../middleware/jwt-decrypt');
+            const auth = req.headers.authorization || req.headers.Authorization || '';
+            if (!auth.startsWith('Bearer ')) return res.sendStatus(401);
+            const token = auth.slice(7);
+            const decoded = decryptJWT(token);
+            effectiveUsername = decoded?.user?.username;
+        }
+
+        if (!effectiveUsername) return res.sendStatus(401);
+
         const account =
-            (await User.findOne({username})) ||
-            (await TrustedUser.findOne({username}));
+            (await User.findOne({ username: effectiveUsername })) ||
+            (await TrustedUser.findOne({ username: effectiveUsername }));
 
         if (!account) return res.sendStatus(404);
 
         return res.json({
             encryptedSymmetricKey: account.encrypted_symmetric_key,
-            username
+            encryptedHmacKey: account.encrypted_hmac_key,   // <-- added
+            username: effectiveUsername,
         });
     } catch (err) {
         logger.error(err);
-        res.status(500).json({message: 'Server error'});
+        res.status(500).json({ message: 'Server error' });
     }
 };
 
 /* CURRENT */
 const currentUser = async (req, res) => {
-    let user = await User.findOne({username: req.user.username});
-    let isTrustedUser = false;
+    try {
+          const { username, trusted: isTrustedUser } = req.user || {};
+          if (!username) return res.sendStatus(401);
+      
+              if (isTrustedUser) {
+                // trusted = HMACs + fullname for client integrity check
+                    const t = await TrustedUser.findOne({ username })
+                      .select('username email hmac_email fullname hmac_fullname hmac_username encrypted_symmetric_key encrypted_hmac_key email_verified');
+                if (!t) return res.sendStatus(404);
+                return res.json({
+                      username: t.username,
+                      email: typeof t.email === 'string' ? t.email : String(t.email),
+                      fullname: t.fullname,
+                      hmac_username: t.hmac_username,
+                      hmac_email: t.hmac_email,
+                      hmac_fullname: t.hmac_fullname,
+                      encrypted_symmetric_key: t.encrypted_symmetric_key,
+                      encrypted_hmac_key: t.encrypted_hmac_key,
+                      email_verified: t.email_verified,
+                      isTrustedUser: true,
+                    });
+              } else {
+                    const u = await User.findOne({ username })
+                      .select('username email encrypted_symmetric_key encrypted_hmac_key email_verified');
+                if (!u) return res.sendStatus(404);
+                return res.json({
+                      username: u.username,
+                      email: u.email,
+                      encrypted_symmetric_key: u.encrypted_symmetric_key,
+                      encrypted_hmac_key: u.encrypted_hmac_key,
+                      email_verified: u.email_verified,
+                      isTrustedUser: false,
+                    });
+              }
+        } catch (err) {
+          logger.error(err);
+          res.status(500).json({ message: 'Server error' });
+        }
+  };
 
-    if (!user) {
-        user = await TrustedUser.findOne({username: req.user.username});
-        isTrustedUser = !!user;
-    }
-
-    if (!user) return res.sendStatus(404);
-
-    res.json({
-        username: user.username,
-        email: user.email,
-        encrypted_symmetric_key: user.encrypted_symmetric_key,
-        encrypted_hmac_key: user.encrypted_hmac_key,
-        email_verified: user.email_verified,
-        isTrustedUser, // <-- add this line
-    });
-};
 
 function encryptForServer(plain) {
     const key = Buffer.from(process.env.TOTP_KEY || 'default', 'hex');

@@ -4,16 +4,15 @@ import {useRouter} from "next/navigation";
 import {
   decryptWithPrivateKey,
   encryptWithPublicKey,
-  importPrivateKey,
-  importPublicKey
 } from '@/cryptography/asymmetric';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
-import {pinnedFetch} from "@/cryptography/certificate";
+import {getCryptoPackage} from "@/utils/transient-util";
+import { pinnedFetch, importPublicKeyFromCertificate } from "@/cryptography/certificate";
+import {assertAuthAndContext, hardLogout} from "@/utils/guard-util";
 
 
 export default function EditUsers() {
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const [name, setName] = useState("");
     const [trustedUsers, setTrustedUsers] = useState([]);
@@ -23,31 +22,15 @@ export default function EditUsers() {
     const [alert, setAlert] = useState(null);
 
     useEffect(() => {
-        const token = localStorage.getItem("token");
         (async () => {
             try {
-                if (!token) {
-                    setIsCheckingAuth(false);
-                    return router.push("/");
-                }
-
-                const response = await pinnedFetch("/api/user/current", {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    setIsAuthenticated(true);
-                    setName(data.isTrustedUser ? data.fullname : data.username);
-                    if (data.isTrustedUser) {
-                        return router.push("/home-trust");
-                    }
-                    fetchTrustedUsers();
-                } else {
-                    router.push("/");
-                }
+                const result = await assertAuthAndContext(router, "normal");
+                if (!result.ok) return;
+                setName(result.user.username);
+                await fetchTrustedUsers();
             } catch (error) {
                 console.error("Error verifying authentication:", error);
-                router.push("/");
+                await hardLogout(router);
             } finally {
                 setIsCheckingAuth(false);
             }
@@ -60,7 +43,7 @@ export default function EditUsers() {
 
         try {
             const token = localStorage.getItem("token");
-            const response = await pinnedFetch("/api/user/trusted/list", {
+            const response = await pinnedFetch("/api/keywrap", {
                 headers: {Authorization: `Bearer ${token}`},
             });
             if (response.ok) {
@@ -77,81 +60,98 @@ export default function EditUsers() {
     };
 
     const handleTrust = async (trustedUser) => {
-        const {default: forge} = await import('node-forge');
+        setErrorMessage(null);
         try {
-            const token = localStorage.getItem("token");
+            if (!trustedUser?._id) throw new Error("Selected trusted user is invalid.");
+            if (!trustedUser?.certificate) throw new Error("Trusted user's certificate is missing.");
 
-            const symKeyResponse = await pinnedFetch("/api/user/getSymmetric", {  // Adjusted URL
-                headers: {Authorization: `Bearer ${token}`},
-            });
-            const symKeyData = await symKeyResponse.json();
-            const encryptedSymmetricKey = symKeyData.encryptedSymmetricKey;
-            const privateKey = localStorage.getItem(`${symKeyData.username}_private_key`);
-
-            if (!privateKey) {
-                throw new Error("Private key not found for the user.");
+            const decryptedPackage = getCryptoPackage();
+            if (!decryptedPackage?.privateKeyJwk) {
+                throw new Error("Crypto package not loaded. Please log in again.");
             }
 
-            const importedPrivateKey = await importPrivateKey(privateKey, "decrypt");
+            const token = localStorage.getItem("token");
+            if (!token) throw new Error("Not authenticated.");
+
+            const keysResp = await pinnedFetch("/api/user/getSymmetric", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!keysResp.ok) {
+                throw new Error(`Unable to retrieve symmetric keys (HTTP ${keysResp.status}).`);
+            }
+            const { encryptedSymmetricKey, encryptedHmacKey } = await keysResp.json();
+            if (!encryptedSymmetricKey || !encryptedHmacKey) {
+                throw new Error("Server did not return both encrypted keys.");
+            }
+
+            const privateKeyJwkCopy = { ...decryptedPackage.privateKeyJwk };
+            delete privateKeyJwkCopy.alg;
+            delete privateKeyJwkCopy.key_ops;
+
+            const importedPrivateKey = await window.crypto.subtle.importKey(
+                "jwk",
+                privateKeyJwkCopy,
+                { name: "RSA-OAEP", hash: "SHA-256" },
+                true,
+                ["decrypt"]
+            );
+
             const symmetricKeyBase64 = await decryptWithPrivateKey(encryptedSymmetricKey, importedPrivateKey);
-            const cert = forge.pki.certificateFromPem(trustedUser.certificate);
+            const hmacKeyBase64 = await decryptWithPrivateKey(encryptedHmacKey, importedPrivateKey);
 
-            const spki = forge.pki.publicKeyToSubjectPublicKeyInfo(cert.publicKey);
-            const pubKeyPem = forge.pki.publicKeyInfoToPem(spki);
+            const trustedUserPubKey = await importPublicKeyFromCertificate(trustedUser.certificate, "encrypt");
 
-            const trustedUserPubKey = await importPublicKey(pubKeyPem, 'encrypt');
-            const encryptedKey = await encryptWithPublicKey(symmetricKeyBase64, trustedUserPubKey);
+            const wrappedSymmetricKey = await encryptWithPublicKey(symmetricKeyBase64, trustedUserPubKey);
+            const wrappedHmacKey = await encryptWithPublicKey(hmacKeyBase64, trustedUserPubKey);
 
-            const sharedResponse = await pinnedFetch("/api/user/trusted/share", {
-                method: 'POST',
-                headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+            const shareResp = await pinnedFetch("/api/keywrap", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    trustedUser: trustedUser._id,
-                    encrypted_symmetric_key: encryptedKey
+                    trusted_user_id: trustedUser._id,
+                    wrapped_symmetric_key: wrappedSymmetricKey,
+                    wrapped_hmac_key: wrappedHmacKey,
                 }),
             });
-            if (sharedResponse.ok) {
-                const sharedResponseData = await sharedResponse.json();
-                setAlert({
-                    type: "success",
-                    message: sharedResponseData.message
-                });
-                fetchTrustedUsers();
-            } else {
-                throw new Error("Share failed");
+
+            if (!shareResp.ok) {
+                const errText = await shareResp.text().catch(() => "");
+                throw new Error(`Failed to store wrapped keys. ${errText || ""}`.trim());
             }
+
+            setAlert({ type: "success", message: "User trusted successfully!" });
+            await fetchTrustedUsers();
         } catch (error) {
             console.error("Error trusting user:", error);
-            setErrorMessage("Failed to trust the user.");
+            setAlert(null);
+            setErrorMessage(`Failed to trust the user: ${error?.message || "Unknown error"}`);
         }
     };
+
 
     const handleUntrust = async (trustedUserId) => {
         try {
             const token = localStorage.getItem("token");
-            const response = await pinnedFetch("/api/user/trusted/unshare", {
-                method: 'POST',
-                headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
-                body: JSON.stringify({ trustedUser: trustedUserId }),
+
+            const response = await pinnedFetch(`/api/keywrap/${trustedUserId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
             });
-            if (response.ok) {
-                const data = await response.json();
-                setAlert({
-                    type: "success",
-                    message: data.message
-                });
-                fetchTrustedUsers();
-            } else {
-                throw new Error("Unshare failed");
-            }
+
+            if (!response.ok) throw new Error("Failed to remove trust relationship.");
+
+            setAlert({ type: "success", message: "User untrusted successfully." });
+            fetchTrustedUsers();
         } catch (error) {
             console.error("Error untrusting user:", error);
-            setErrorMessage("Failed to untrust the user.");
+            setErrorMessage("Failed to untrust the user: " + error.message);
         }
     };
 
-    const sharedUsers = trustedUsers.filter(u => u.isShared);
-    const availableUsers = trustedUsers.filter(u => !u.isShared);
+    const byName = (a, b) => a.username.localeCompare(b.username);
+    const sharedUsers = trustedUsers.filter(u => u.isShared).sort(byName);
+    const availableUsers = trustedUsers.filter(u => !u.isShared).sort(byName);
+
 
     return (
         <>

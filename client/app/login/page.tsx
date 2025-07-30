@@ -5,10 +5,10 @@ import {useRouter} from 'next/navigation';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {login} from '@/handlers/auth-hdlr';
-import {pinnedFetch} from "@/cryptography/certificate";
+import {pinnedFetch, publicKeyPemFromCertificate} from "@/cryptography/certificate";
 import {decryptCryptoPassportLogin} from "@/cryptography/symmetric"
 import {handleAnyUserSession} from "@/handlers/crypto-hdlr";
-
+import { setCryptoPackage } from '@/utils/transient-util';
 
 export default function Login() {
     const router = useRouter();
@@ -44,6 +44,27 @@ export default function Login() {
         })();
     }, [router]);
 
+    function normalizeDecryptedPackage(pkg: any) {
+        const out: any = { ...pkg };
+
+        if (!out.privateKeyJwk && out.userPrivateKeyJwk) {
+            out.privateKeyJwk = out.userPrivateKeyJwk;
+        }
+
+        try {
+            if (out.userCertificate && !out.userPublicKeyPem) {
+                out.userPublicKeyPem = publicKeyPemFromCertificate(out.userCertificate);
+            }
+        } catch {}
+
+        try {
+            if (out.orgCertificate && !out.orgPublicKeyPem) {
+                out.orgPublicKeyPem = publicKeyPemFromCertificate(out.orgCertificate);
+            }
+        } catch {}
+
+        return out;
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -74,6 +95,7 @@ export default function Login() {
                 const rootBytes = Uint8Array.from(atob(rootB64), c => c.charCodeAt(0));
                 const digest = await crypto.subtle.digest('SHA-256', rootBytes);
                 const rootFp = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('').toLowerCase();
+
                 if (rootFp !== process.env.NEXT_PUBLIC_CA_ROOT_FINGERPRINT) {
                     throw new Error('Root CA certificate fingerprint mismatch. Potential MITM attack.');
                 }
@@ -87,11 +109,6 @@ export default function Login() {
                 if (!userVerifyResp.ok || !userVerifyData.valid) {
                     throw new Error('User certificate chain verification failed.');
                 }
-                console.log('DEBUG: userVerifyData (from backend):', userVerifyData);
-                console.log('DEBUG: userVerifyData.cn:', userVerifyData.cn);
-                console.log('DEBUG: username field:', username, 'typeof:', typeof username, 'length:', username.length);
-                console.log('DEBUG: CN field:', userVerifyData.cn, 'typeof:', typeof userVerifyData.cn, 'length:', (userVerifyData.cn || '').length);
-                console.log('DEBUG: compare result:', userVerifyData.cn === username);
 
                 if (userVerifyData.cn !== username) {
                     throw new Error('User certificate CN does not match username.');
@@ -106,12 +123,16 @@ export default function Login() {
                     throw new Error('Organization certificate chain verification failed.');
                 }
             }
+
         } catch (err: any) {
             console.error('Package decryption or cert verification failed:', err);
             setMessage("Invalid password or corrupted package: " + err.message);
             setIsSubmitting(false);
             return;
         }
+
+        const normalizedPackage = normalizeDecryptedPackage(decryptedPackage);
+        setCryptoPackage(normalizedPackage);
 
         // login w/ username, TOTP, decrypted package
         const loginResp = await login(username, code);
@@ -125,9 +146,7 @@ export default function Login() {
                 if (!res.ok) throw new Error('Profile retrieval failed after login.');
                 const userData = await res.json();
 
-                if (!userData.isTrustedUser) {
-                    await handleAnyUserSession(userData, decryptedPackage, (msg) => setMessage(msg));
-                }
+                await handleAnyUserSession(userData, normalizedPackage, (msg) => setMessage(msg));
 
                 router.push(userData.isTrustedUser ? '/home-trust' : '/home');
             } catch (err) {

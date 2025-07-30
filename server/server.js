@@ -93,7 +93,7 @@ const server = https.createServer(ssl, app);
 app.use('/api/user', require('./routes/user-route'));
 app.use('/api/ca', require('./routes/ca-route'));
 app.use('/api/video', require('./routes/video-route'));
-
+app.use('/api/keywrap',  require('./routes/keywrap-route'));
 
 /**
  * @swagger

@@ -11,6 +11,7 @@ import {encryptDatachunk, importKey,} from "@/cryptography/symmetric";
 import {base64ToArrayBuffer} from "@/cryptography/asymmetric";
 import {pinnedFetch} from "@/cryptography/certificate";
 import {getSessionKeys} from "@/utils/session-util";
+import {assertAuthAndContext, hardLogout} from "@/utils/guard-util";
 
 
 export default function HomePage() {
@@ -27,30 +28,19 @@ export default function HomePage() {
     useEffect(() => {
         (async () => {
             try {
-                const token = localStorage.getItem("token");
-                if (!token) return router.replace("/");
+                const result = await assertAuthAndContext(router, "normal");
+                if (!result.ok) return;
 
-                const res = await pinnedFetch("/api/user/current", {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-                if (!res.ok) return router.replace("/");
+                const token = localStorage.getItem("token")!;
+                setName(result.user.username);
 
-                const user = await res.json();
-                if (user.isTrustedUser) {
-                    return router.replace("/home-trust");
-                }
-
-                setName(user.username);
-
-                await initializeMedia(token, user.username);
+                await initializeMedia(token, result.user.username);
             } catch (err) {
                 console.error("Auth check or profile setup failed:", err);
                 setErrorMessage("Session error. Please log in again.");
-                await handleLogout();
+                await hardLogout(router);
             }
         })();
-
-        return () => cleanupResources();
     }, []);
 
     const cleanupResources = () => {

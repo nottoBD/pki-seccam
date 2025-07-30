@@ -15,11 +15,213 @@ import {
     decryptWithPrivateKey,
     encryptWithPublicKey,
     getOrCreateUserKeypair,
+    importPrivateKey,
     importPublicKey,
-    verifySignatureWithPublicKey
 } from "@/cryptography/asymmetric";
-import {buildOrganizationCSR, buildUserCSR} from '@/cryptography/certificate';
+import {
+    buildOrganizationCSR,
+    buildUserCSR,
+    importPublicKeyFromCertificate,
+    pinnedFetch
+} from '@/cryptography/certificate';
 import {setSessionKeys} from "@/utils/session-util";
+
+
+export const unwrapKeysWithPrivateKey = async (wrappedSymmetricKey, wrappedHmacKey, privateKeyJwk) => {
+    try {
+        if (!privateKeyJwk) throw new Error('No privateKeyJwk provided for unwrap');
+        const importedPrivateKey = await importPrivateKey(privateKeyJwk, 'decrypt');
+
+        const symmetricKeyBase64 = await decryptWithPrivateKey(wrappedSymmetricKey, importedPrivateKey);
+        const hmacKeyBase64 = await decryptWithPrivateKey(wrappedHmacKey, importedPrivateKey);
+
+        const symmetricKey = await importKey(base64ToArrayBuffer(symmetricKeyBase64));
+        const hmacKey = await importHmacKey(base64ToArrayBuffer(hmacKeyBase64));
+
+        return { symmetricKey, hmacKey };
+    } catch (err) {
+        console.error('unwrapKeysWithPrivateKey error:', err);
+        throw new Error('Failed to unwrap keys (RSA-OAEP).');
+    }
+};
+
+
+export const setTrustForUser = async (trustedUser) => {
+    try {
+        const token = localStorage.getItem("token");
+        const symmKeyBase64 = sessionStorage.getItem("session_symm");
+        const hmacKeyBase64 = sessionStorage.getItem("session_hmac");
+
+        const trustedUserPublicKey = await importPublicKey(trustedUser.public_key, 'encrypt');
+
+        const wrappedSymmetricKey = await encryptWithPublicKey(symmKeyBase64, trustedUserPublicKey);
+        const wrappedHmacKey = await encryptWithPublicKey(hmacKeyBase64, trustedUserPublicKey);
+
+        const response = await pinnedFetch('/api/keywrap', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                trusted_user_id: trustedUser._id,
+                wrapped_symmetric_key: wrappedSymmetricKey,
+                wrapped_hmac_key: wrappedHmacKey,
+            }),
+        });
+
+        if (!response.ok) throw new Error('Failed to set trust');
+
+        return await response.json();
+    } catch (err) {
+        console.error(err);
+        throw new Error('Error setting trust.');
+    }
+};
+
+export const handleAnyUserSession = async (user_data, inMemoryPackage = null, onError = (msg) => {
+}) => {
+    try {
+        let keyPackage = inMemoryPackage;
+
+        if (!keyPackage || !keyPackage.privateKeyJwk) {
+            onError("Crypto package not found or private key malformed.");
+            throw new Error("Crypto package not found.");
+        }
+
+        if (user_data.isTrustedUser) {
+            return await handleTrustedUserSession(user_data, keyPackage);
+        } else {
+            console.log("Handling untrusted user session");
+        }
+
+        const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
+        delete privateKeyJwkCopy.alg;
+
+        const privKey = await window.crypto.subtle.importKey(
+            'jwk',
+            privateKeyJwkCopy,
+            {name: 'RSA-OAEP', hash: 'SHA-256'},
+            true,
+            ['decrypt']
+        );
+
+        const symmetric_key_base64 = await decryptWithPrivateKey(
+            user_data.encrypted_symmetric_key,
+            privKey
+        );
+        const symmetric_key = await importKey(base64ToArrayBuffer(symmetric_key_base64));
+
+        const hmac_key_base64 = await decryptWithPrivateKey(
+            user_data.encrypted_hmac_key,
+            privKey
+        );
+        const hmac_key = await importHmacKey(base64ToArrayBuffer(hmac_key_base64));
+
+        setSessionKeys(symmetric_key_base64, hmac_key_base64);
+
+        const enc_email = JSON.parse(user_data.email);
+        const decrypted_email = await decryptData(enc_email, symmetric_key);
+
+        return {
+            username: user_data.username,
+            email: decrypted_email,
+        };
+    } catch (error) {
+        console.error("Decryption error:", error);
+        onError('Unable to decrypt data. Import your crypto package.');
+        throw Error('Unable to decrypt data.');
+    }
+};
+
+export const handleTrustedUserSession = async (userData, decryptedPackage) => {
+    try {
+        const {
+            username,
+            hmac_username,
+            email: encrypted_email,
+            hmac_email,
+            fullname: encrypted_fullname,
+            hmac_fullname,
+            organization: encrypted_org,
+            hmac_organization,
+            country: encrypted_country,
+            hmac_country,
+            encrypted_symmetric_key,
+            encrypted_hmac_key,
+        } = userData;
+
+        const userPrivateKeyJwkCopy = {...decryptedPackage.userPrivateKeyJwk};
+        delete userPrivateKeyJwkCopy.alg;
+        delete userPrivateKeyJwkCopy.key_ops;
+
+
+        const privKey = await window.crypto.subtle.importKey(
+            'jwk',
+            userPrivateKeyJwkCopy,
+            {name: 'RSA-OAEP', hash: 'SHA-256'},
+            true,
+            ['decrypt']
+        );
+
+
+        const symKeyBase64 = await decryptWithPrivateKey(encrypted_symmetric_key, privKey);
+        const hmacKeyBase64 = await decryptWithPrivateKey(encrypted_hmac_key, privKey);
+
+        const symKey = await importKey(base64ToArrayBuffer(symKeyBase64));
+        const hmacKey = await importHmacKey(base64ToArrayBuffer(hmacKeyBase64));
+
+        ['hmac_username','hmac_email','hmac_fullname'].forEach((k) => {
+            const v = userData[k];
+            if (typeof v !== 'string') console.warn(`${k} is not a string`, v);
+            else if (!/^[A-Za-z0-9+/=_-]+$/.test(v.trim())) console.warn(`${k} contains non-base64 chars`, v);
+        });
+
+        const macOK_user = await verifyMAC(username, hmac_username, hmacKey);
+        const macOK_email = await verifyMAC(encrypted_email, hmac_email, hmacKey);
+        const macOK_name = await verifyMAC(encrypted_fullname, hmac_fullname, hmacKey);
+        if (!macOK_user || !macOK_email || !macOK_name)
+            throw new Error('Core PII integrity check failed');
+
+        const emailObj = JSON.parse(encrypted_email);
+        const fullnameObj = JSON.parse(encrypted_fullname);
+
+        const decrypted_email = await decryptData(emailObj, symKey);
+        const decrypted_fullname = await decryptData(fullnameObj, symKey);
+
+        let decrypted_org = '';
+        let decrypted_country = '';
+
+        if (encrypted_org && hmac_organization) {
+            const macOK_org = await verifyMAC(encrypted_org, hmac_organization, hmacKey);
+            if (macOK_org) {
+                decrypted_org = await decryptData(JSON.parse(encrypted_org), symKey);
+            }
+        }
+
+        if (encrypted_country && hmac_country) {
+            const macOK_cty = await verifyMAC(encrypted_country, hmac_country, hmacKey);
+            if (macOK_cty) {
+                decrypted_country = await decryptData(JSON.parse(encrypted_country), symKey);
+            }
+        }
+
+        // Store session keys
+        setSessionKeys(
+            symKeyBase64,
+            hmacKeyBase64
+        );
+
+        return {
+            username,
+            email: decrypted_email,
+            fullname: decrypted_fullname,
+            organization: decrypted_org,
+            country: decrypted_country,
+        };
+
+    } catch (err) {
+        console.error(err);
+        throw new Error('Unable to decrypt data.');
+    }
+};
 
 export const handleRegistration = async (userData) => {
     try {
@@ -106,148 +308,5 @@ export const handleRegistration = async (userData) => {
     } catch (err) {
         console.error(err);
         throw new Error('Registration failed client-side.');
-    }
-};
-
-export const handleAnyUserSession = async (user_data, inMemoryPackage = null, onError = (msg) => {
-}) => {
-    try {
-        let keyPackage = inMemoryPackage;
-
-        if (!keyPackage || !keyPackage.privateKeyJwk) {
-            onError("Crypto package not found or private key malformed.");
-            throw new Error("Crypto package not found.");
-        }
-
-        if (user_data.isTrustedUser) {
-            return await handleTrustedUserSession(user_data, keyPackage);
-        }
-
-        const privateKeyJwkCopy = {...keyPackage.privateKeyJwk};
-        delete privateKeyJwkCopy.alg;
-
-        const privKey = await window.crypto.subtle.importKey(
-            'jwk',
-            privateKeyJwkCopy,
-            {name: 'RSA-OAEP', hash: 'SHA-256'},
-            true,
-            ['decrypt']
-        );
-
-        const symmetric_key_base64 = await decryptWithPrivateKey(
-            user_data.encrypted_symmetric_key,
-            privKey
-        );
-        const symmetric_key = await importKey(base64ToArrayBuffer(symmetric_key_base64));
-
-        const hmac_key_base64 = await decryptWithPrivateKey(
-            user_data.encrypted_hmac_key,
-            privKey
-        );
-        const hmac_key = await importHmacKey(base64ToArrayBuffer(hmac_key_base64));
-
-        setSessionKeys(symmetric_key_base64, hmac_key_base64);
-
-        const enc_email = JSON.parse(user_data.email);
-        const decrypted_email = await decryptData(enc_email, symmetric_key);
-
-        return {
-            username: user_data.username,
-            email: decrypted_email,
-        };
-    } catch (error) {
-        console.error("Decryption error:", error);
-        onError('Unable to decrypt data. Import your crypto package.');
-        throw Error('Unable to decrypt data.');
-    }
-};
-
-export const handleTrustedUserSession = async (userData, decryptedPackage) => {
-    try {
-        const {
-            username,
-            hmac_username,
-            email: encrypted_email,
-            hmac_email,
-            fullname: encrypted_fullname,
-            hmac_fullname,
-            organization: encrypted_org,
-            hmac_organization,
-            country: encrypted_country,
-            hmac_country,
-            encrypted_symmetric_key,
-            encrypted_hmac_key,
-        } = userData;
-
-        const userPrivateKeyJwkCopy = {...decryptedPackage.userPrivateKeyJwk};
-        delete userPrivateKeyJwkCopy.alg;
-        delete userPrivateKeyJwkCopy.key_ops;
-
-        const orgPublicPem = decryptedPackage.orgPublicKeyPem;
-
-        const pubKey = await importPublicKey(orgPublicPem, 'verify');
-        const privKey = await window.crypto.subtle.importKey(
-            'jwk',
-            userPrivateKeyJwkCopy,
-            {name: 'RSA-OAEP', hash: 'SHA-256'},
-            true,
-            ['decrypt']
-        );
-
-
-        const symKeyBase64 = await decryptWithPrivateKey(encrypted_symmetric_key, privKey);
-        const hmacKeyBase64 = await decryptWithPrivateKey(encrypted_hmac_key, privKey);
-
-        const symKey = await importKey(base64ToArrayBuffer(symKeyBase64));
-        const hmacKey = await importHmacKey(base64ToArrayBuffer(hmacKeyBase64));
-
-        // MAC checks
-        const macOK_user = await verifyMAC(username, hmac_username, hmacKey);
-        const macOK_email = await verifyMAC(encrypted_email, hmac_email, hmacKey);
-        const macOK_name = await verifyMAC(encrypted_fullname, hmac_fullname, hmacKey);
-        if (!macOK_user || !macOK_email || !macOK_name)
-            throw new Error('Core PII integrity check failed');
-
-        // Decrypt user data
-        const emailObj = JSON.parse(encrypted_email);
-        const fullnameObj = JSON.parse(encrypted_fullname);
-
-        const decrypted_email = await decryptData(emailObj, symKey);
-        const decrypted_fullname = await decryptData(fullnameObj, symKey);
-
-        let decrypted_org = '';
-        let decrypted_country = '';
-
-        if (encrypted_org && hmac_organization) {
-            const macOK_org = await verifyMAC(encrypted_org, hmac_organization, hmacKey);
-            if (macOK_org) {
-                decrypted_org = await decryptData(JSON.parse(encrypted_org), symKey);
-            }
-        }
-
-        if (encrypted_country && hmac_country) {
-            const macOK_cty = await verifyMAC(encrypted_country, hmac_country, hmacKey);
-            if (macOK_cty) {
-                decrypted_country = await decryptData(JSON.parse(encrypted_country), symKey);
-            }
-        }
-
-        // Store session keys
-        setSessionKeys(
-            symKeyBase64,
-            hmacKeyBase64
-        );
-
-        return {
-            username,
-            email: decrypted_email,
-            fullname: decrypted_fullname,
-            organization: decrypted_org,
-            country: decrypted_country,
-        };
-
-    } catch (err) {
-        console.error(err);
-        throw new Error('Unable to decrypt data.');
     }
 };

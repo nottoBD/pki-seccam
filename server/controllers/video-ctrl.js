@@ -3,6 +3,9 @@ const VideoChunk = require('../models/videochunk');
 const Video = require('../models/video');
 const TrustedUser = require('../models/usertrusted');
 const logger = require('../logging/logger');
+const Wrapping = require('../models/keywrap');
+const User = require('../models/user');
+
 
 function getUsername(req) {
     const auth = req.headers.authorization || req.headers.Authorization || '';
@@ -12,6 +15,33 @@ function getUsername(req) {
     if (!decoded?.user?.username) throw new Error('invalid token');
     return decoded.user.username;
 }
+
+exports.trustedList = async (req, res) => {
+    try {
+        const requestingUsername = getUsername(req);
+        const trustedUser = await TrustedUser.findOne({ username: requestingUsername });
+        if (!trustedUser) return res.status(403).json({ message: 'Only trusted users can access this endpoint.' });
+
+        const wraps = await Wrapping.find({ trusted_user_id: trustedUser._id })
+            .populate('normal_user_id', 'username');
+
+        const results = await Promise.all(
+            wraps.map(async (w) => {
+                const owner = w.normal_user_id;
+                const vidDoc = await Video.findOne({ username: owner.username });
+                return {
+                    username: owner.username,
+                    videos: vidDoc ? vidDoc.videos.map(v => ({ name: v.videoName, sharedBy: owner.username })) : [],
+                };
+            })
+        );
+
+        res.json(results);
+    } catch (err) {
+        logger.error(err.message);
+        res.status(500).send('Internal Server Error');
+    }
+};
 
 exports.uploadChunk = async (req, res) => {
     try {
@@ -86,15 +116,31 @@ exports.deleteVideo = async (req, res) => {
 
 exports.listChunks = async (req, res) => {
     try {
-        const {username, name} = req.params;
-        const hasAccess = await Video.exists({username, 'videos.videoName': name});
-        if (!hasAccess) return res.status(404).send('Video not found');
+        const requestingUsername = getUsername(req);
+        const { username: ownerUsername, name } = req.params;
+        const owner = await User.findOne({ username: ownerUsername });
+        if (!owner) return res.status(404).send('Owner user not found');
 
-        const chunks = await VideoChunk.find({videoName: name})
-            .sort({'metadata.chunkIndex': 1});
+        const isOwnerRequesting = ownerUsername === requestingUsername;
+
+        let hasAccess = isOwnerRequesting;
+
+        if (!hasAccess) {
+            const trustedUser = await TrustedUser.findOne({ username: requestingUsername });
+            if (trustedUser) {
+                const wrapExists = await Wrapping.exists({
+                    normal_user_id: owner._id,
+                    trusted_user_id: trustedUser._id
+                });
+                hasAccess = !!wrapExists;
+            }
+        }
+
+        if (!hasAccess) return res.status(403).send('Access not permitted');
+        const chunks = await VideoChunk.find({videoName: name}).sort({'metadata.chunkIndex': 1});
 
         if (!chunks.length) return res.status(404).send('No chunks');
-        res.json(chunks.map(c => ({chunk: c.chunk, metadata: [c.metadata]})));
+        res.json(chunks.map(c => ({chunk: c.chunk, metadata: c.metadata})));
     } catch (err) {
         logger.error(err.message);
         res.status(500).send('Internal Server Error');

@@ -3,7 +3,6 @@ const { execFile, execSync, exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const tmp = require('tmp');
-const crypto = require('crypto');
 
 const STEP_CA_URL = process.env.STEP_CA_URL || 'https://step-ca:9000';
 const STEP_ROOT = process.env.NODE_EXTRA_CA_CERTS || '/ca/certs/root_ca.crt';
@@ -18,17 +17,8 @@ async function signCertificate(body) {
         throw new Error('`csr` field with PEM CSR is required.');
     }
 
-    console.log(`Received CSR request with notAfter: ${notAfter}, notBefore: ${notBefore}`);
-    console.log(`CSR length: ${csr.length} chars`);
-    console.log(`CSR starts with: ${csr.substring(0, 50).replace(/\n/g, '\\n')}`);
-    console.log(`CSR ends with: ${csr.substring(Math.max(0, csr.length - 50)).replace(/\n/g, '\\n')}`);
-    console.log(`CSR SHA-256: ${crypto.createHash('sha256').update(csr).digest('hex')}`);
-
     const csrFile = tmp.fileSync({ postfix: '.csr' });
     fs.writeFileSync(csrFile.name, csr);
-
-    const writtenCSR = fs.readFileSync(csrFile.name, 'utf8');
-    console.log(`Temp file verification – Length: ${writtenCSR.length}, Match: ${writtenCSR === csr ? '✅' : '❌'}`);
 
     try {
         const inspect = execSync(

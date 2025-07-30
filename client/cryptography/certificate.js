@@ -1,5 +1,5 @@
-import forge from 'node-forge';
-import {getOrCreateUserKeypair} from './asymmetric';
+import * as forge from 'node-forge';
+import {getOrCreateUserKeypair, importPublicKey} from './asymmetric';
 
 
 /* cache successful pins */
@@ -7,12 +7,26 @@ let lastCheckOK = false;
 let lastCheckTs = 0;
 const TEN_MIN = 5 * 60 * 1000;
 
-function safe(str) {
-    return str
-        .replace(/[^A-Za-z0-9 '()+,.\-\/:=?]+/g, '-')   // underscore
-        .replace(/ +/g, ' ')                            // collapse blanks
-        .trim()                                         // no tail/head space
-        .substring(0, 64);                              // length
+
+function firstCertificatePem(pem) {
+    const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+    if (!match) throw new Error('No X.509 certificate block found.');
+    return match[0];
+}
+
+ export function publicKeyPemFromCertificate(pemChain) {
+     const leafPem = firstCertificatePem(pemChain);
+    const cert = forge.pki.certificateFromPem(leafPem);
+     if (!('n' in cert.publicKey)) {
+            throw new Error('Trusted user certificate does not contain an RSA public key (RSA‑OAEP required).');
+         }
+   return forge.pki.publicKeyToPem(cert.publicKey);
+ }
+
+
+export async function importPublicKeyFromCertificate(certPem, useFor = 'encrypt') {
+    const pubKeyPem = publicKeyPemFromCertificate(certPem);
+    return importPublicKey(pubKeyPem, useFor);
 }
 
 const pinnedFingerprint =
@@ -49,7 +63,7 @@ export async function buildUserCSR(username) {
 }
 
 export async function buildOrganizationCSR(fullname, organization, country) {
-    const orgKey = `${organization.trim()}_${country.trim()}`; // Unique key for org+country
+    const orgKey = `${organization.trim()}_${country.trim()}`; //key uniq for org+country
 
     const {publicKeyPem, privateKey, privateJwk} = await getOrCreateUserKeypair(orgKey);
 

@@ -81,7 +81,7 @@ are still in the volume and reminds the operator to place step-root.pem in all c
 > 
 > `step-root.pem` is to be imported, but the browser `.p12` payload is currently optional; *mTLS* is not enforced globally at the time of project's due date. 
 > 
-> In [`nginx/nginx.conf`](nginx/nginx.conf), if you were to uncomment the last few lines and set client verification to **on**  it would be impossible to access the application without that `.p12` also imported. The reason for that are development impediments encountered when trying diverse Javascript libraries to generate a valid and importable `.p12`.
+> In [`nginx/nginx.conf`](nginx/nginx.conf), if you were to uncomment the last few lines and set client verification to **on**  it would be impossible to access the application without that `.p12` also imported. The reason for that are development impediments encountered when trying diverse Javascript libraries to generate fully valid `.p12`.
 
 
 ![doc/img/pki-script.png](doc/img/pki-script.png)
@@ -91,8 +91,7 @@ are still in the volume and reminds the operator to place step-root.pem in all c
 
 **Run this script how often you need, as long as PKI setup has not been reset in-between.**
 
-bBoots the stack using hard-TLS authentication: it re-builds all images with a
-specific Buildx, boots the empty containers after removing any orphaned services, and sets them up with secrets defined in `./.env`. After the stack is booted, it verifies the security chain end-to-end: it prints out the root CA subject/issuer, verifies the server full-chain under step-ca, performs a live HTTPS handshake against backend:8888 using the root CA to prove certificate sanity and cipher strength (TLS1.3, AES-256-GCM, ECDSA 1P-256), and exercises Mailpit’s REST endpoint over HTTPS as well as its SMTP STARTTLS enforcement. All the checks occur locally, with curl fixed to step-root.pem, so any downgrade or MITM makes the script abort.
+Boots the stack using hard-TLS authentication: it re-builds all images with a specific Buildx, boots the empty containers after removing any orphaned services, and sets them up with secrets defined in `./.env`. After the stack is booted, it verifies the security chain end-to-end: it prints out the root CA subject/issuer, verifies the server full-chain under step-ca, performs a live HTTPS handshake against backend:8888 using the root CA to prove certificate sanity and cipher strength (TLS1.3, AES-256-GCM, ECDSA 1P-256), and exercises Mailpit’s REST endpoint over HTTPS as well as its SMTP STARTTLS enforcement. All the checks occur locally, with curl fixed to step-root.pem, so any downgrade or MITM makes the script abort.
 
 ```bash
 ./cmd/2-total_run.sh
