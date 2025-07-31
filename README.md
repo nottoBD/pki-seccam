@@ -2,11 +2,11 @@
 ## Table of Contents
 - [**i.** Introduction](#i-introduction)
 - [**ii.** System Prerequisites](#ii-system-prerequisites)
-- **[I. SECCAM: Build & Run](#i-seccam-build--run-)**
+- **[I. SECCAM: Build & Run](#i-seccam-build--run)**
     - [**I.0** Flush Script ](#i0-flush-script-cmd0-total_resetsh)
     - [**I.1** PKI Setup Script](#i1-pki-setup-script-cmd1-pki_setupsh)
-    - [**I.2** Docker Run Script](#i2-docker-run-script-cmd2-total_run)
-- [**a.** Setup](#a-setup)
+    - [**I.2** Docker Run Script](#i2-docker-run-script-cmd2-total_runsh)
+- [**a.** Dependencies](#a-dependencies)
 - [**b.** Troubleshooting](#b-troubleshooting)
 
 ---
@@ -15,8 +15,27 @@
 
 Computer Project for the course `INFO-Y115 - Secure Software Design & Web Security` at Free University of Brussels.
 
-**Student:** BOTTON David  000615056 <br>
-**Professor:**  Pr. Absil R.
+
+<table style="width:100%; border-collapse: collapse;">
+  <tr>
+    <th style="border: 1px solid black;">Role</th>
+    <th style="border: 1px solid black;">Name</th>
+    <th style="border: 1px solid black;">Matricule</th>
+  </tr>
+  <tr>
+    <td style="border: 1px solid black;"><b>Student</b></td>
+    <td style="border: 1px solid black;"><b>BOTTON</b> David</td>
+    <td style="border: 1px solid black;">000615056</td>
+  </tr>
+  <tr>
+    <td style="border: 1px solid black;"><b>Professor</b></td>
+    <td style="border: 1px solid black;"><b>Pr. Absil</b> R.</td>
+    <td style="border: 1px solid black; background-color: #24292e;"></td>
+  </tr>
+</table>
+
+*For the complete Developer Documentation and Project Report, please refer to that [`Document`](doc/info-y115_report_seccam_botton.pdf).*
+
 
 ## ii. System Prerequisites
 
@@ -33,7 +52,7 @@ docker run hello-world
 - terminal says *command not found* 
 - terminal asks for *sudo privileges*
 
-**Then:** jump to *[setup](#a-setup)*.
+**Then:** jump to *[dependencies](#a-dependencies)*.
 
 ---
 
@@ -91,7 +110,7 @@ are still in the volume and reminds the operator to place step-root.pem in all c
 
 **Run this script how often you need, as long as PKI setup has not been reset in-between.**
 
-Boots the stack using hard-TLS authentication: it re-builds all images with a specific Buildx, boots the empty containers after removing any orphaned services, and sets them up with secrets defined in `./.env`. After the stack is booted, it verifies the security chain end-to-end: it prints out the root CA subject/issuer, verifies the server full-chain under step-ca, performs a live HTTPS handshake against backend:8888 using the root CA to prove certificate sanity and cipher strength (TLS1.3, AES-256-GCM, ECDSA 1P-256), and exercises Mailpit’s REST endpoint over HTTPS as well as its SMTP STARTTLS enforcement. All the checks occur locally, with curl fixed to step-root.pem, so any downgrade or MITM makes the script abort.
+Boots the stack using hard-TLS authentication: it re-builds all images with a specific Buildx, boots the empty containers after removing any orphaned services, and sets them up with secrets defined in `./.env`. After the stack is booted, it verifies the security chain end-to-end: it prints out the root CA subject/issuer, verifies the server full-chain under step-ca, performs a live HTTPS handshake against backend, through a restrictive reverse proxy, using the root CA to prove certificate sanity and cipher strength (TLS1.3, AES-256-GCM, ECDSA 1P-256), and exercises Mailpit’s REST endpoint over HTTPS as well as its SMTP STARTTLS enforcement. All the checks occur locally, with curl fixed to step-root.pem, so any downgrade or MITM makes the script abort.
 
 ```bash
 ./cmd/2-total_run.sh
@@ -102,7 +121,8 @@ Boots the stack using hard-TLS authentication: it re-builds all images with a sp
 \
 ✔ Otherwise, visit `https://{vm_private_ip_or_localhost}:3443/` in your local, favorite browser!
 
-## a. Setup
+*``Note: `` Access the API documentation endpoint at  /api-docs*
+## a. Dependencies
 For the *apt package manager* under *systemd*, run the following commands:
 ```bash
 sudo apt update

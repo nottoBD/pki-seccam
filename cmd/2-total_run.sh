@@ -114,4 +114,4 @@ say "👉  Mailpit Leaf-cert testing email:"
 
 printf "\n\n Enjoy. \n"
 say " Seccam Client   @ https://localhost:3443"
-say " Mailpit UI      @ https://localhost:3443/mailpit/"
+say " Mailpit UI      @ https://localhost:3443/mailpit"

@@ -1,16 +1,18 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 const decryptJWT = require('../middleware/jwt-decrypt');
 const Wrapping = require('../models/keywrap');
 const User = require('../models/user');
 const TrustedUser = require('../models/usertrusted');
 const logger = require('../logging/logger');
-
+const { decryptToken } = require('../utils/cookie-util');
 
 function getUsername(req) {
-    const auth = req.headers.authorization || req.headers.Authorization || '';
-    if (!auth.startsWith('Bearer ')) throw new Error('token missing');
-    const token = auth.slice(7);
-    const decoded = decryptJWT(token);
-    if (!decoded?.user?.username) throw new Error('invalid token');
+    const encToken = req.cookies.authToken;
+    if (!encToken) throw new Error('cookie missing');
+    const decoded = decryptJWT(encToken);
+    if (!decoded?.user?.username) throw new Error('invalid authentication');
     return decoded.user.username;
 }
 

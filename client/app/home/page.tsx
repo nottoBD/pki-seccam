@@ -30,18 +30,15 @@ export default function HomePage() {
             try {
                 const result = await assertAuthAndContext(router, "normal");
                 if (!result.ok) return;
-
-                const token = localStorage.getItem("token")!;
                 setName(result.user.username);
-
-                await initializeMedia(token, result.user.username);
+                await initializeMedia(result.user.username);
             } catch (err) {
                 console.error("Auth check or profile setup failed:", err);
                 setErrorMessage("Session error. Please log in again.");
                 await hardLogout(router);
             }
         })();
-    }, []);
+    }, [router]);
 
     const cleanupResources = () => {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -52,20 +49,15 @@ export default function HomePage() {
         setRecording(false);
     };
 
-    async function initializeMedia(token: string, username: string) {
+    async function initializeMedia(username, retries = 5, delay = 2000) {
         try {
             if (!navigator.mediaDevices?.getUserMedia) {
                 setErrorMessage("Media devices not supported.");
                 return;
             }
 
-            // Lowe qual: 640x480 @ 15FPS
             const constraints = {
-                video: {
-                    width: {ideal: 640},
-                    height: {ideal: 480},
-                    frameRate: {ideal: 15}
-                },
+                video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } },
                 audio: false
             };
             const userStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -84,7 +76,7 @@ export default function HomePage() {
             const ctx = canvas.getContext('2d');
 
             // Apply  grayscale
-            let animationFrameId: number;
+            let animationFrameId;
             const drawGrayscale = () => {
                 if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
                     ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
@@ -92,9 +84,9 @@ export default function HomePage() {
                     const data = imageData.data;
                     for (let i = 0; i < data.length; i += 4) {
                         const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                        data[i] = avg;     // Red
-                        data[i + 1] = avg; // Green
-                        data[i + 2] = avg; // Blue
+                        data[i] = avg;     // R
+                        data[i + 1] = avg; // G
+                        data[i + 2] = avg; // B
                     }
                     ctx.putImageData(imageData, 0, 0);
                 }
@@ -108,50 +100,44 @@ export default function HomePage() {
                 videoRef.current.srcObject = grayscaleStream;
             }
 
-            // VP8 efficient
             let mimeType = 'video/webm;codecs=vp8';
             if (!MediaRecorder.isTypeSupported(mimeType)) {
                 mimeType = 'video/webm';
             }
 
-            const {symmBase64} = getSessionKeys();
+            const { symmBase64 } = getSessionKeys();
             if (!symmBase64) {
                 throw new Error("Session keys not available. Log in again.");
             }
             const symKey = await importKey(base64ToArrayBuffer(symmBase64));
 
-            const recorder = new MediaRecorder(grayscaleStream, {mimeType});
+            const recorder = new MediaRecorder(grayscaleStream, { mimeType });
             mediaRecorderRef.current = recorder;
 
-            const chunks: BlobPart[] = [];
+            const chunks = [];
             recorder.ondataavailable = async (ev) => {
                 if (ev.data.size > 0) {
                     chunks.push(ev.data);
-
-                    // encrypt/post chunks
                     const encryptedChunk = await encryptDatachunk(ev.data, symKey);
                     const payload = new FormData();
                     payload.append("encryptedChunk", JSON.stringify(encryptedChunk));
-                    payload.append(
-                        "metadata",
-                        JSON.stringify({
-                            videoId,
-                            chunkIndex: chunks.length,
-                            timestamp: Date.now(),
-                            chunkSize: ev.data.size,
-                        })
-                    );
+                    payload.append("metadata", JSON.stringify({
+                        videoId,
+                        chunkIndex: chunks.length,
+                        timestamp: Date.now(),
+                        chunkSize: ev.data.size,
+                    }));
                     await pinnedFetch("/api/video/streaming", {
                         method: "POST",
                         body: payload,
-                        headers: {Authorization: `Bearer ${token}`},
                     });
                 }
             };
+
             recorder.onstop = () => {
                 cancelAnimationFrame(animationFrameId);
                 videoElement.pause();
-                const blob = new Blob(chunks, {type: mimeType});
+                const blob = new Blob(chunks, { type: mimeType });
                 setMediaUrl(URL.createObjectURL(blob));
                 setRecording(false);
             };
@@ -159,15 +145,22 @@ export default function HomePage() {
             setRecording(true);
             recorder.start(800);
             setErrorMessage(null);
-        } catch (err: any) {
+        } catch (err) {
             console.error("Media init failed:", err);
             setErrorMessage(err?.message ?? "Could not start camera.");
+
+            if (retries > 0) {
+                console.log(`Retrying media init in ${delay}ms... (${retries} retries left)`);
+                setTimeout(() => initializeMedia(username, retries - 1, delay), delay);
+            } else {
+                setErrorMessage("Failed to initialize camera after multiple attempts.");
+            }
         }
     }
 
     const handleLogout = async () => {
         cleanupResources();
-        await logout();
+        await hardLogout(router);
         router.replace("/");
     };
 
@@ -175,10 +168,10 @@ export default function HomePage() {
         const handleVisibilityChange = async () => {
             if (document.visibilityState === 'hidden') {
                 cleanupResources();
-            } else {
-                const token = localStorage.getItem("token");
-                if (token && name) {
-                    await initializeMedia(token, name);
+            } else if (name) {
+                const result = await assertAuthAndContext(router, "normal");
+                if (result.ok) {
+                    await initializeMedia(name);
                 }
             }
         };

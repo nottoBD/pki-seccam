@@ -39,21 +39,18 @@ export default function PlaybackPage() {
                 setIsCheckingAuth(false);
             }
         })();
-    }, []);
+    }, [router]);
 
     const fetchUserVideos = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem("token");
             const endpoint = isTrustedUser ? "/api/video/trustedList" : "/api/video/list";
-
-            const response = await pinnedFetch(endpoint, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
-
+            const response = await pinnedFetch(endpoint);
             if (response.ok) {
                 const data = await response.json();
                 setVideos(isTrustedUser ? data.flatMap(u => u.videos.map(v => ({...v, owner_username: u.username}))) : data.videos);
+            } else {
+                setErrorMessage("Failed to fetch videos.");
             }
         } catch (error) {
             setErrorMessage("An error occurred while fetching your videos.");
@@ -72,52 +69,47 @@ export default function PlaybackPage() {
         setErrorMessage(null);
 
         try {
-            const token = localStorage.getItem("token");
             let symmetricKey;
-
             if (isTrustedUser) {
-                const wrapResp = await pinnedFetch(`/api/keywrap/${video.owner_username}/keys`, {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
+                const wrapResp = await pinnedFetch(`/api/keywrap/${video.owner_username}/keys`);
                 if (!wrapResp.ok) throw new Error("Access denied.");
 
                 const { wrapped_symmetric_key, wrapped_hmac_key } = await wrapResp.json();
                 const pkg = getCryptoPackage();
-                  if (!pkg?.privateKeyJwk) {
-                        throw new Error("Crypto package not loaded (transient). Please log in again.");
-                      }
+                if (!pkg?.privateKeyJwk) {
+                    throw new Error("Crypto package not loaded (transient). Please log in again.");
+                }
                 let unwrap;
-                  try {
-                        unwrap = await unwrapKeysWithPrivateKey(wrapped_symmetric_key, wrapped_hmac_key, pkg.privateKeyJwk);
-                      } catch (e) {
-                        setErrorMessage(`Key unwrap failed: ${e.message}`);
-                        setLoading(false);
-                        return;
-                      }
-                  ({ symmetricKey } = unwrap);
+                try {
+                    unwrap = await unwrapKeysWithPrivateKey(wrapped_symmetric_key, wrapped_hmac_key, pkg.privateKeyJwk);
+                } catch (e) {
+                    setErrorMessage(`Key unwrap failed: ${e.message}`);
+                    setLoading(false);
+                    return;
+                }
+                ({ symmetricKey } = unwrap);
             } else {
                 const { symmBase64 } = getSessionKeys();
                 symmetricKey = await importKey(base64ToArrayBuffer(symmBase64));
             }
 
-            const chunksResp = await pinnedFetch(`/api/video/${video.name}/${video.owner_username || name}/chunks`, {
-                headers: {Authorization: `Bearer ${token}`},
-            });
+            const chunksResp = await pinnedFetch(`/api/video/${video.name}/${video.owner_username || name}/chunks`);
+            if (!chunksResp.ok) throw new Error("Failed to fetch video chunks.");
             const chunks = await chunksResp.json();
 
             let decryptedChunks;
             try {
-                  decryptedChunks = await Promise.all(chunks.map(c => decryptDataChunk(c.chunk, symmetricKey)));
-                } catch (e) {
-                  setErrorMessage(`AES-GCM decrypt failed: ${e.message}`);
-                  setLoading(false);
-                  return;
-                }
+                decryptedChunks = await Promise.all(chunks.map(c => decryptDataChunk(c.chunk, symmetricKey)));
+            } catch (e) {
+                setErrorMessage(`AES-GCM decrypt failed: ${e.message}`);
+                setLoading(false);
+                return;
+            }
 
             const combinedBlob = new Blob(decryptedChunks, { type: "video/webm" });
             setDecryptedVideoUrl(URL.createObjectURL(combinedBlob));
         } catch (error) {
-            setErrorMessage("Failed to decrypt the video.");
+            setErrorMessage("Failed to decrypt the video: " + error.message);
         } finally {
             setLoading(false);
         }
@@ -126,6 +118,30 @@ export default function PlaybackPage() {
     const handleCloseVideo = () => {
         setSelectedVideo(null);
         setDecryptedVideoUrl(null);
+    };
+
+    const handleDeleteVideo = async () => {
+        if (!selectedVideo) return;
+
+        setLoading(true);
+        setErrorMessage(null);
+
+        try {
+            const response = await pinnedFetch(`/api/video/${selectedVideo.name}`, {
+                method: "DELETE",
+            });
+
+            if (response.ok) {
+                setVideos(videos.filter(video => video.name !== selectedVideo.name));
+                handleCloseVideo();
+            } else {
+                throw new Error('Failed to delete the video.');
+            }
+        } catch (error) {
+            setErrorMessage(error.message);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -155,7 +171,7 @@ export default function PlaybackPage() {
                             <video src={decryptedVideoUrl} controls preload="auto" style={{ width: "100%" }} />
                             <div className="field-row" style={{ justifyContent: "space-between", marginTop: 6 }}>
                                 <a href={decryptedVideoUrl} download={selectedVideo.name}>Download</a>
-                                {!isTrustedUser && <button>Delete</button>}
+                                {!isTrustedUser && <button onClick={handleDeleteVideo} disabled={loading}>Delete</button>}
                                 <button onClick={handleCloseVideo}>Close</button>
                             </div>
                         </Window98>

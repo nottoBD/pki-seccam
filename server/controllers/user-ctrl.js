@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 require("dotenv").config();
 const crypto = require("crypto");
 const fs = require("fs");
@@ -9,9 +12,10 @@ const TrustedUser = require("../models/usertrusted");
 const Videos = require("../models/video");
 const logger = require("../logging/logger");
 const Organization = require('../models/organization');
-const {getSerialNumber} = require('../utils/x509');
-const {sendVerificationMail} = require('../utils/mailer');
+const {getSerialNumber} = require('../utils/x509-util');
+const {sendVerificationMail} = require('../utils/mailer-util');
 const caCtrl = require('./ca-ctrl');
+const { encryptToken, decryptToken } = require('../utils/cookie-util');
 
 const listTrustedUsers = async (req, res) => {
     try {
@@ -35,10 +39,9 @@ const getUserSymmetric = async (req, res) => {
         let effectiveUsername = username;
         if (!effectiveUsername) {
             const decryptJWT = require('../middleware/jwt-decrypt');
-            const auth = req.headers.authorization || req.headers.Authorization || '';
-            if (!auth.startsWith('Bearer ')) return res.sendStatus(401);
-            const token = auth.slice(7);
-            const decoded = decryptJWT(token);
+            const encToken = req.cookies.authToken;
+            if (!encToken) return res.sendStatus(401);
+            const decoded = decryptJWT(encToken);
             effectiveUsername = decoded?.user?.username;
         }
 
@@ -64,44 +67,44 @@ const getUserSymmetric = async (req, res) => {
 /* CURRENT */
 const currentUser = async (req, res) => {
     try {
-          const { username, trusted: isTrustedUser } = req.user || {};
-          if (!username) return res.sendStatus(401);
-      
-              if (isTrustedUser) {
-                // trusted = HMACs + fullname for client integrity check
-                    const t = await TrustedUser.findOne({ username })
-                      .select('username email hmac_email fullname hmac_fullname hmac_username encrypted_symmetric_key encrypted_hmac_key email_verified');
-                if (!t) return res.sendStatus(404);
-                return res.json({
-                      username: t.username,
-                      email: typeof t.email === 'string' ? t.email : String(t.email),
-                      fullname: t.fullname,
-                      hmac_username: t.hmac_username,
-                      hmac_email: t.hmac_email,
-                      hmac_fullname: t.hmac_fullname,
-                      encrypted_symmetric_key: t.encrypted_symmetric_key,
-                      encrypted_hmac_key: t.encrypted_hmac_key,
-                      email_verified: t.email_verified,
-                      isTrustedUser: true,
-                    });
-              } else {
-                    const u = await User.findOne({ username })
-                      .select('username email encrypted_symmetric_key encrypted_hmac_key email_verified');
-                if (!u) return res.sendStatus(404);
-                return res.json({
-                      username: u.username,
-                      email: u.email,
-                      encrypted_symmetric_key: u.encrypted_symmetric_key,
-                      encrypted_hmac_key: u.encrypted_hmac_key,
-                      email_verified: u.email_verified,
-                      isTrustedUser: false,
-                    });
-              }
-        } catch (err) {
-          logger.error(err);
-          res.status(500).json({ message: 'Server error' });
+        const { username, trusted: isTrustedUser } = req.user || {};
+        if (!username) return res.sendStatus(401);
+
+        if (isTrustedUser) {
+            // trusted = HMACs + fullname for client integrity check
+            const t = await TrustedUser.findOne({ username })
+                .select('username email hmac_email fullname hmac_fullname hmac_username encrypted_symmetric_key encrypted_hmac_key email_verified');
+            if (!t) return res.sendStatus(404);
+            return res.json({
+                username: t.username,
+                email: typeof t.email === 'string' ? t.email : String(t.email),
+                fullname: t.fullname,
+                hmac_username: t.hmac_username,
+                hmac_email: t.hmac_email,
+                hmac_fullname: t.hmac_fullname,
+                encrypted_symmetric_key: t.encrypted_symmetric_key,
+                encrypted_hmac_key: t.encrypted_hmac_key,
+                email_verified: t.email_verified,
+                isTrustedUser: true,
+            });
+        } else {
+            const u = await User.findOne({ username })
+                .select('username email encrypted_symmetric_key encrypted_hmac_key email_verified');
+            if (!u) return res.sendStatus(404);
+            return res.json({
+                username: u.username,
+                email: u.email,
+                encrypted_symmetric_key: u.encrypted_symmetric_key,
+                encrypted_hmac_key: u.encrypted_hmac_key,
+                email_verified: u.email_verified,
+                isTrustedUser: false,
+            });
         }
-  };
+    } catch (err) {
+        logger.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
 
 
 function encryptForServer(plain) {
@@ -305,7 +308,16 @@ const loginUser = async (req, res) => {
         user: {username, trusted}
     }, process.env.ACCESS_TOKEN_SECRET, {expiresIn: "30m"});
 
-    return res.json({accessToken: token});
+    const encToken = encryptToken(token);
+    res.cookie('authToken', encToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 30 * 60 * 1000, // 30'
+        path: '/'
+    });
+
+    return res.status(200).json({ message: 'Login successful' });
 };
 
 /* Email Link Verification.. */

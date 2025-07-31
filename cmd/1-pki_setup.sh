@@ -188,6 +188,7 @@ say "👉 CA root SHA‑256 fingerprint:"; printf "%s $CA_ROOT_FINGERPRINT"
 say "\n👉 Server cert SHA‑256 fingerprint:"; printf "%s $CERT_FINGERPRINT"
 
 ENV_FILE="$PROJECT_ROOT/.env"; touch "$ENV_FILE"
+COOKIE_ENCRYPT_KEY=$(openssl rand -hex 32)
 
 if grep -q '^NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT=' "$ENV_FILE"; then
   sed -i.bak "s|^NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT=.*|NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT=$CERT_FINGERPRINT|" "$ENV_FILE"
@@ -209,6 +210,13 @@ if grep -q '^NEXT_PUBLIC_CA_ROOT_FINGERPRINT=' "$ENV_FILE"; then
 else
   echo "NEXT_PUBLIC_CA_ROOT_FINGERPRINT=$CA_ROOT_FINGERPRINT" >> "$ENV_FILE"
   printf "\n (Appended CA root fingerprint)"
+fi
+if grep -q '^COOKIE_ENCRYPT_KEY=' "$ENV_FILE"; then
+    sed -i.bak "s|^COOKIE_ENCRYPT_KEY=.*|COOKIE_ENCRYPT_KEY=$COOKIE_ENCRYPT_KEY|" "$ENV_FILE"
+    printf "\n (Updated cookie encryption key)"
+else
+    echo "COOKIE_ENCRYPT_KEY=$COOKIE_ENCRYPT_KEY" >> "$ENV_FILE"
+    printf "\n (Appended cookie encryption key)"
 fi
 printf "\n"
 

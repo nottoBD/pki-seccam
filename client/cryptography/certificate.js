@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 import * as forge from 'node-forge';
 import {getOrCreateUserKeypair, importPublicKey} from './asymmetric';
 

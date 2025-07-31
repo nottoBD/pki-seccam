@@ -7,11 +7,23 @@ import {useSearchParams} from 'next/navigation';
 import Navbar98 from '@/components/Navbar98';
 import Window98 from '@/components/Window98';
 import {pinnedFetch} from '@/cryptography/certificate';
+import {assertAuthAndContext} from '@/utils/guard-util';
 
 export default function VerifyEmail() {
     const params = useSearchParams();
     const [msg, setMsg] = useState('Verifying…');
     const [closedMsgVisible, setClosedMsgVisible] = useState(false);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const result = await assertAuthAndContext(router);
+                setIsAuthenticated(result.ok);
+            } catch {setIsAuthenticated(false);
+            }
+        })();
+        }, []);
 
     useEffect(() => {
         const token = params.get('token');
@@ -41,7 +53,7 @@ export default function VerifyEmail() {
 
     return (
         <>
-            <Navbar98/>
+            {isAuthenticated && <Navbar98 />}
             <main style={{display: 'flex', justifyContent: 'center', marginTop: 60}}>
                 <Suspense fallback={<Window98 title="E‑mail Verification" width={320}><p>Loading…</p></Window98>}>
                     <Window98 title="E‑mail Verification" width={320}>

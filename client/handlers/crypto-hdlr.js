@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 import {
     decryptData,
     encryptData,
@@ -48,7 +51,6 @@ export const unwrapKeysWithPrivateKey = async (wrappedSymmetricKey, wrappedHmacK
 
 export const setTrustForUser = async (trustedUser) => {
     try {
-        const token = localStorage.getItem("token");
         const symmKeyBase64 = sessionStorage.getItem("session_symm");
         const hmacKeyBase64 = sessionStorage.getItem("session_hmac");
 
@@ -59,7 +61,7 @@ export const setTrustForUser = async (trustedUser) => {
 
         const response = await pinnedFetch('/api/keywrap', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 trusted_user_id: trustedUser._id,
                 wrapped_symmetric_key: wrappedSymmetricKey,
@@ -148,7 +150,10 @@ export const handleTrustedUserSession = async (userData, decryptedPackage) => {
             encrypted_hmac_key,
         } = userData;
 
-        const userPrivateKeyJwkCopy = {...decryptedPackage.userPrivateKeyJwk};
+        const sourceJwk = decryptedPackage?.privateKeyJwk ?? decryptedPackage?.userPrivateKeyJwk;
+        if (!sourceJwk) throw new Error('Missing private key JWK in package.');
+        const userPrivateKeyJwkCopy = { ...sourceJwk };
+
         delete userPrivateKeyJwkCopy.alg;
         delete userPrivateKeyJwkCopy.key_ops;
 

@@ -6,7 +6,7 @@ import {register} from '@/handlers/auth-hdlr';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {useRouter} from "next/navigation";
-
+import { assertAuthAndContext } from '@/utils/guard-util';
 import {encryptCryptoPassportRegistration} from "@/cryptography/symmetric";
 
 const USERNAME_REGEX = /^[A-Za-z0-9_.]{5,16}$/;  // 5–16 chars, letters/digits/._
@@ -29,19 +29,17 @@ const Register = () => {
     const [secret, setSecret] = useState('');
     const [userErr, setUserErr] = useState('');
     const [fullErr, setFullErr] = useState('');
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [orgErr, setOrgErr] = useState('');
     const [countryErr, setCountryErr] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const usernameRef = useRef<HTMLInputElement>(null);
     const passwordRef = useRef<HTMLInputElement>(null);
-
     const [showExportModal, setShowExportModal] = useState(false);
     const [password, setPassword] = useState('');
     const [password2, setPassword2] = useState('');
-
     const [exportError, setExportError] = useState('');
     const [exportDone, setExportDone] = useState(false);
-
     const [cryptoPackage, setCryptoPackage] = useState<any>(null);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -65,6 +63,13 @@ const Register = () => {
             setCountryErr(country ? '' : 'Country required');
         }
     }, [isTrustedUser, country]);
+
+    useEffect(() => {
+        (async () => {
+            try { const result = await assertAuthAndContext(router); setIsAuthenticated(result.ok); }
+            catch { setIsAuthenticated(false); }
+        })();
+        }, [router]);
 
     const handleExportDownload = async () => {
         setExportError('');
@@ -231,7 +236,7 @@ const Register = () => {
 
     return (
         <>
-            <Navbar98/>
+            {isAuthenticated && <Navbar98 />}
             <main style={{display: "flex", justifyContent: "center", marginTop: 50}}>
                 <Window98 title="SEC-CAM – Register" width={360}>
                     <form onSubmit={handleRegister}>

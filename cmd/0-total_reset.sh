@@ -81,7 +81,7 @@ USER_ID=$(id -un)
 clean_tree "$PKI_DIR"
 clean_tree "$PINS_DIR"
 
-rm -f "$PROJECT_ROOT/step-root.pem" "$PROJECT_ROOT/.step-ca-password" "$PROJECT_ROOT/${USER_ID}.p12"
+rm -f "$PROJECT_ROOT/step-root.pem" "$PROJECT_ROOT/.step-ca-password" "$PROJECT_ROOT/${USER_ID}.p12" $PROJECT_ROOT/*.sec.json
 
 # 4) Init clean buildx
 ############################################################################

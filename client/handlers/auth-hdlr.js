@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 import {pinnedFetch} from '@/cryptography/certificate';
 import {handleRegistration} from '@/handlers/crypto-hdlr';
 import {clearSessionKeys} from '@/utils/session-util';
@@ -23,28 +26,34 @@ export async function login(username, code) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({username, code}),
     });
-    const data = await res.json();
 
-    return {status: res.status, message: data.message, token: data.accessToken};
+    let data;
+    try {
+        data = await res.json();
+    } catch (_) {
+        return {status: res.status, message: 'Server returned invalid response.'};
+    }
+
+    if (!res.ok) {
+        return {status: res.status, message: data.message || 'Login failed'};
+    }
+    return {status: res.status, message: 'Login successful'};
 }
 
 
 export async function logout() {
     try {
-        const token = localStorage.getItem('token');
-        await pinnedFetch('/api/user/logout', {
+        const res = await pinnedFetch('/api/user/logout', {
             method: 'POST',
-            headers: {...cfg.headers, Authorization: `Bearer ${token}`},
+            headers: cfg.headers,
         });
-
-        localStorage.removeItem('token');
+        const data = await res.json();
         clearSessionKeys();
-        return {status: 200, message: 'Logged out'};
-    } catch (err) {
-        return {status: err.status || 500, message: err.message || "Logout error"};
-    } finally {
-        localStorage.removeItem("token");
         clearCryptoPackage();
+        return {status: res.status, message: data.message || 'Logged out'};
+    } catch (err) {
         clearSessionKeys();
+        clearCryptoPackage();
+        return { status: err.status || 500, message: err.message || "Logout error" };
     }
 }

@@ -2,6 +2,7 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import {useRouter} from 'next/navigation';
+import { assertAuthAndContext } from '@/utils/guard-util';
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
 import {login} from '@/handlers/auth-hdlr';
@@ -18,6 +19,7 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [message, setMessage] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
     const usernameRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -28,19 +30,14 @@ export default function Login() {
 
     useEffect(() => {
         (async () => {
-            const t = localStorage.getItem('token');
-            if (!t) return;
             try {
-                const res = await pinnedFetch('/api/user/current', {
-                    headers: {Authorization: `Bearer ${t}`}
-                });
-                if (res.ok) {
-                    const userData = await res.json();
+                const result = await assertAuthAndContext(router);
+                if (result.ok) {
+                    setIsAuthenticated(true);
+                    const userData = result.user;
                     router.push(userData.isTrustedUser ? '/home-trust' : '/home');
                 }
-            } catch {
-                localStorage.removeItem('token');
-            }
+            } catch { setIsAuthenticated(false); }
         })();
     }, [router]);
 
@@ -85,7 +82,8 @@ export default function Login() {
                 throw new Error('Missing private key in package.');
             }
 
-            const isTrustedUser = !!decryptedPackage.userPrivateKeyJwk && !!decryptedPackage.orgPrivateKeyJwk && !!decryptedPackage.userCertificate && !!decryptedPackage.orgCertificate;
+            const hasPriv = !!(decryptedPackage.privateKeyJwk || decryptedPackage.userPrivateKeyJwk);
+            const isTrustedUser = hasPriv && !!decryptedPackage.orgPrivateKeyJwk && !!decryptedPackage.userCertificate && !!decryptedPackage.orgCertificate;
 
             if (isTrustedUser) {
                 const rootPem = await (await pinnedFetch('/api/ca/root')).text();
@@ -136,13 +134,9 @@ export default function Login() {
 
         // login w/ username, TOTP, decrypted package
         const loginResp = await login(username, code);
-        if (loginResp.status === 200 && loginResp.token) {
-            localStorage.setItem('token', loginResp.token);
-
+        if (loginResp.status === 200) {
             try {
-                const res = await pinnedFetch('/api/user/current', {
-                    headers: {Authorization: `Bearer ${loginResp.token}`}
-                });
+                const res = await pinnedFetch('/api/user/current');
                 if (!res.ok) throw new Error('Profile retrieval failed after login.');
                 const userData = await res.json();
 
@@ -156,12 +150,20 @@ export default function Login() {
             return;
         }
 
+        let loginMessage = loginResp.message;
+        try {
+            const data = await loginResp.res.json();
+            loginMessage = data.message || loginMessage;
+        } catch (_) {
+            loginMessage = 'Server error during login. Please try again.';
+        }
+
         if (loginResp.status === 400 && loginResp.message?.includes('Invalid OTP')) {
             setMessage('Invalid OTP. Please verify your TOTP and try again.');
         } else if (loginResp.status === 400 && loginResp.message?.includes('Missing')) {
             setMessage('Package validation failed: ' + loginResp.message);
-        } else if (loginResp.status === 401 && loginResp.message?.includes('Device not recognized')) {
-            setMessage('Device not recognized. Ensure the correct crypto package is imported.');
+        } else if (loginResp.status === 404 && loginResp.message?.includes('User not found')) {
+            setMessage('User not found. Please check your username.');
         } else if (loginResp.status === 403 && loginResp.message?.includes('Email not verified')) {
             setMessage('Email not verified. Please verify your email first.');
         } else {
@@ -172,7 +174,7 @@ export default function Login() {
 
     return (
         <>
-            <Navbar98/>
+            {isAuthenticated && <Navbar98/>}
 
             <main style={{display: "flex", justifyContent: "center", marginTop: 50}}>
                 <Window98 title="SEC-CAM – Entrance" width={360}>

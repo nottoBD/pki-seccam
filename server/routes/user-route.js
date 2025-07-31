@@ -197,7 +197,7 @@ router.post('/register', registerUser)
  * /api/user/login:
  *   post:
  *     summary: Login a user
- *     description: Authenticates a user using username and OTP code.
+ *     description: Authenticates a user using username and OTP code, setting an encrypted HTTP-only cookie (authToken).
  *     requestBody:
  *       required: true
  *       content:
@@ -215,14 +215,15 @@ router.post('/register', registerUser)
  *                 description: OTP code
  *     responses:
  *       200:
- *         description: Login successful
+ *         description: Login successful, authToken cookie set
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 accessToken:
+ *                 message:
  *                   type: string
+ *                   example: Login successful
  *       400:
  *         description: Invalid OTP
  *       403:
@@ -366,7 +367,7 @@ router.get('/trusted/list', validateToken, listTrustedUsers);
  * /api/user/logout:
  *   post:
  *     summary: Logout the user
- *     description: Logs out the authenticated user.
+ *     description: Logs out the authenticated user by clearing the authToken cookie.
  *     security:
  *       - cookieAuth: []
  *     responses:
@@ -379,15 +380,22 @@ router.get('/trusted/list', validateToken, listTrustedUsers);
  *               properties:
  *                 message:
  *                   type: string
+ *                   example: Logout successful
  *       500:
  *         description: Server error
  */
 router.post('/logout', validateToken, (req, res) => {
     try {
-        res.json({message: 'success'});
+        res.clearCookie('authToken', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/'
+        });
+        res.json({ message: 'Logout successful' });
     } catch (error) {
-        logger.info("500: Server Error")
-        res.status(500).send({message: "Server error"})
+        logger.error('Server Error during logout:', error);
+        res.status(500).json({ message: 'Server error' });
     }
 })
 

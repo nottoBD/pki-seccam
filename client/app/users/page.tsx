@@ -35,17 +35,14 @@ export default function EditUsers() {
                 setIsCheckingAuth(false);
             }
         })();
-    }, []);
+    }, [router]);
 
     const fetchTrustedUsers = async () => {
         setLoading(true);
         setErrorMessage(null);
 
         try {
-            const token = localStorage.getItem("token");
-            const response = await pinnedFetch("/api/keywrap", {
-                headers: {Authorization: `Bearer ${token}`},
-            });
+            const response = await pinnedFetch("/api/keywrap");
             if (response.ok) {
                 setTrustedUsers(await response.json());
             } else {
@@ -70,12 +67,7 @@ export default function EditUsers() {
                 throw new Error("Crypto package not loaded. Please log in again.");
             }
 
-            const token = localStorage.getItem("token");
-            if (!token) throw new Error("Not authenticated.");
-
-            const keysResp = await pinnedFetch("/api/user/getSymmetric", {
-                headers: { Authorization: `Bearer ${token}` },
-            });
+            const keysResp = await pinnedFetch("/api/user/getSymmetric");
             if (!keysResp.ok) {
                 throw new Error(`Unable to retrieve symmetric keys (HTTP ${keysResp.status}).`);
             }
@@ -106,7 +98,7 @@ export default function EditUsers() {
 
             const shareResp = await pinnedFetch("/api/keywrap", {
                 method: "POST",
-                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     trusted_user_id: trustedUser._id,
                     wrapped_symmetric_key: wrappedSymmetricKey,
@@ -131,11 +123,9 @@ export default function EditUsers() {
 
     const handleUntrust = async (trustedUserId) => {
         try {
-            const token = localStorage.getItem("token");
-
             const response = await pinnedFetch(`/api/keywrap/${trustedUserId}`, {
                 method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {"Content-Type": "application/json"},
             });
 
             if (!response.ok) throw new Error("Failed to remove trust relationship.");

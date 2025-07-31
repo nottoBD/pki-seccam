@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 
 export const arrayBufferToBase64 = (buffer) => {
     const bytes = new Uint8Array(buffer);

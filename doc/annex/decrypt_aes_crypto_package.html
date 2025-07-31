@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Decrypt Seccam Crypto Package</title>
+    </head>
+    <body>
+        <h1>Decrypt Seccam Crypto Package</h1>
+        <input accept=".json" id="fileInput" type="file">
+        <input id="passwordInput" placeholder="Enter password" type="password">
+        <button onclick="decryptFile()">cfr Console Logs</button>
+            <script>
+                async function decryptPackage(content, password) {
+                    const {salt, iv, ciphertext} = content;
+
+                    if (!salt || !iv || !ciphertext) {
+                        throw new Error("Malformed encrypted package.");
+                    }
+
+                    const keyMaterial = await crypto.subtle.importKey(
+                        "raw",
+                        new TextEncoder().encode(password),
+                        "PBKDF2",
+                        false,
+                        ["deriveKey"]
+                    );
+
+                    const key = await crypto.subtle.deriveKey(
+                        {
+                            name: "PBKDF2",
+                            salt: new Uint8Array(salt),
+                            iterations: 250000,
+                            hash: "SHA-256"
+                        },
+                        keyMaterial,
+                        {name: "AES-GCM", length: 256},
+                        false,
+                        ["decrypt"]
+                    );
+
+                    const decrypted = await crypto.subtle.decrypt(
+                        {name: "AES-GCM", iv: new Uint8Array(iv)},
+                        key,
+                        new Uint8Array(ciphertext)
+                    );
+
+                    return JSON.parse(new TextDecoder().decode(decrypted));
+                }
+
+                async function decryptFile() {
+                    const fileInput = document.getElementById('fileInput');
+                    const passwordInput = document.getElementById('passwordInput');
+                    const file = fileInput.files[0];
+                    const password = passwordInput.value;
+
+                    if (!file || !password) {
+                        alert('select file/enter a password.');
+                        return;
+                    }
+
+                    try {
+                        const fileContent = await file.text();
+                        const parsedContent = JSON.parse(fileContent);
+                        const decryptedData = await decryptPackage(parsedContent, password);
+                        console.log('Decrypted Package Content:', decryptedData);
+                        alert('Decryption successful! Check the browser console for the package content.');
+                    } catch (error) {
+                        console.error('Decryption failed:', error);
+                        alert('Decryption failed: ' + error.message);
+                    }
+                }
+        </script>
+    </body>
+</html>

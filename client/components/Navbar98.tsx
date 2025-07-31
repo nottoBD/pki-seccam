@@ -2,40 +2,31 @@
 
 import Link from "next/link";
 import {useEffect, useState} from "react";
-import {useRouter} from "next/navigation";
-import {pinnedFetch} from "@/cryptography/certificate";
-import {logout} from "@/handlers/auth-hdlr";
+import {useRouter, usePathname} from "next/navigation";
+import {hardLogout, assertAuthAndContext} from "@/utils/guard-util";
 
 
 export default function Navbar98() {
     const [links, setLinks] = useState<{ href: string; label: string }[]>([]);
     const [name, setName] = useState<string>("user");
     const router = useRouter();
+    const pathname = usePathname();
 
     const handleLogout = async () => {
-        await logout();
+        await hardLogout(router);
         router.replace("/");
     };
 
     useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (!token) return; // unauth pages
-
         (async () => {
             try {
-                const res = await pinnedFetch(
-                    "/api/user/current",
-                    {headers: {Authorization: `Bearer ${token}`}}
-                );
-
-                if (res.status === 401 || res.status === 403) {
-                    localStorage.removeItem("token");
-                    router.replace("/");
+                const result = await assertAuthAndContext(router);
+                if (!result.ok) {
+                    setLinks([]);
                     return;
                 }
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-                const user = await res.json();
+                const user = result.user;
                 setName(user.displayName ?? user.username ?? "user");
 
                 const homeHref = user.isTrustedUser ? "/home-trust" : "/home";
@@ -51,6 +42,7 @@ export default function Navbar98() {
                 setLinks(nav);
             } catch (err) {
                 console.error("Navbar bootstrap failed:", err);
+                setLinks([]);
             }
         })();
     }, [router]);
@@ -76,7 +68,7 @@ export default function Navbar98() {
             ))}
 
             <div style={{marginLeft: "auto"}} className="field-row">
-                <p style={{margin: 0}}>Hello, {name}!</p>
+                <p style={{margin: 0}}>Hello, <a href="/passport">{name}</a>!</p>
                 <button onClick={handleLogout}>Logout</button>
             </div>
         </nav>

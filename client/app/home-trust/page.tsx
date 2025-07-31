@@ -32,7 +32,7 @@ const HomeTrustPage = () => {
             <Navbar98/>
             <main style={{display: "flex", justifyContent: "center", marginTop: 40}}>
                 <Window98 title="Organization Home" width={480}>
-
+                    <h2>SEC CAM</h2>
                 </Window98>
             </main>
         </>

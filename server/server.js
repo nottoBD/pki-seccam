@@ -1,3 +1,6 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 require('dotenv').config();
 
 const fs = require('fs');
@@ -39,7 +42,7 @@ const swaggerOptions = {
                 cookieAuth: {
                     type: 'apiKey',
                     in: 'cookie',
-                    name: 'token',
+                    name: 'authToken',
                 },
             },
         },
@@ -81,7 +84,6 @@ app.use((req, res, next) => {
 app.head('*', (_, res) => res.status(200).end());
 
 
-// socket
 const ssl = {
     key: fs.readFileSync('/tls/server.key'),
     cert: fs.readFileSync('/tls/server.crt'),

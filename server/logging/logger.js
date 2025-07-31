@@ -19,12 +19,12 @@ const sanitize = (txt = "") => {
     if (typeof txt !== "string") return "";
 
     let out = txt
-        .replace(/[\r\n]+/g, " ")
-        .replace(/\t/g, " ")
-        .replace(/%/g, "%25")
-        .replace(/\|/g, "\\|")
-        .replace(/[<>]/g, "")
-        .replace(/(password|token|secret|key|credential)(\s*[:=]\s*)([^\s]+)/gi,
+        .replace(/[ \n\r]+/g, " ")  // replace space
+        .replace(/\t/g, " ")        // replace tab
+        .replace(/%/g, "%25")       // escape %
+        .replace(/\|/g, "\\|")      // escape |
+        .replace(/[<>]/g, "")       // remove < and >
+        .replace(/(password|token|authToken|secret|key|credential)(\s*[:=]\s*)([^\s]+)/gi,
             (_m, k, sep) => `${k}${sep}******`);
 
     if (out.length > MAX_LENGTH) out = `${out.slice(0, MAX_LENGTH)}... [TRUNCATED]`;

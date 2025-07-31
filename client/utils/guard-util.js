@@ -1,30 +1,27 @@
 import { pinnedFetch } from "@/cryptography/certificate";
-import { getSessionKeys } from "@/utils/session-util";
+import { getSessionKeys, clearSessionKeys } from "@/utils/session-util";
 import { getCryptoPackage, clearCryptoPackage } from "@/utils/transient-util";
+
 
 export async function hardLogout(router) {
     try {
-        localStorage.removeItem("token");
+        await pinnedFetch('/api/user/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
     } catch (_) {}
 
     try {
-        const mod = await import("@/utils/session-util").catch(() => null);
-        if (mod && typeof mod.clearSessionKeys === "function") {
-            try {
-                await mod.clearSessionKeys();
-            } catch (_) {}
-        } else {
-            try {
-                sessionStorage.removeItem("session_symm");
-            } catch (_) {}
-            try {
-                sessionStorage.removeItem("session_hmac");
-            } catch (_) {}
-        }
-    } catch (_) {}
+        await clearSessionKeys();
+    } catch (_) {
+        try {
+            sessionStorage.removeItem("session_symm");
+            sessionStorage.removeItem("session_hmac");
+        } catch (_) {}
+    }
 
     try {
-        if (typeof clearCryptoPackage === "function") clearCryptoPackage();
+        clearCryptoPackage();
     } catch (_) {}
 
     router.replace("/");
@@ -54,22 +51,22 @@ function hasTrustedCryptoPackage() {
 }
 
 export async function assertAuthAndContext(router, target = "either") {
-    const token = (() => {
-        try {
-            return localStorage.getItem("token");
-        } catch (_) {
-            return null;
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname.split('?')[0] : '';
+    const hasSession = hasNormalSessionKeys() || hasTrustedCryptoPackage();
+    if (['/login', '/register', '/passport', '/verify-email', '/api-docs'].includes(currentPath)) {
+        if (!hasSession) {
+            return { ok: false };
         }
-    })();
-
-    if (!token) {
-        await hardLogout(router);
+        const res = await pinnedFetch("/api/user/current").catch(() => null);
+        if (res && res.ok) {const user = await res.json().catch(() => null);
+            if (user) {
+                return { ok: true, user };
+            }
+        }
         return { ok: false };
     }
 
-    const res = await pinnedFetch("/api/user/current", {
-        headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => null);
+    const res = await pinnedFetch("/api/user/current").catch(() => null);
 
     if (!res || !res.ok) {
         await hardLogout(router);

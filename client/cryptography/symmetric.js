@@ -1,4 +1,20 @@
+// Copyright (C) 2025 David Botton <david.botton@ulb.be>
+// This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
+// Licensed under the WTFPL Version 2. See LICENSE file for details.
 import {arrayBufferToBase64, base64ToArrayBuffer} from './asymmetric';
+
+export async function reEncryptCryptoPassport(fileOrObject, currentPasswordOrNull, newPassword) {
+    let payload;
+
+    if (fileOrObject instanceof Blob || fileOrObject instanceof File) {
+        if (!currentPasswordOrNull) throw new Error("Current password is required when a file is provided.");
+        payload = await decryptCryptoPassportLogin(fileOrObject, currentPasswordOrNull);
+    } else {
+        payload = fileOrObject;
+    }
+
+    return await encryptCryptoPassportRegistration(payload, newPassword);
+}
 
 export async function encryptCryptoPassportRegistration(json, password) {
     const encoder = new TextEncoder();
@@ -175,7 +191,7 @@ export const generateSymmetricKey = async () => {
             length: 256,
         },
         true,
-        ['encrypt', 'decrypt'] // Usages
+        ['encrypt', 'decrypt']
     );
     return key;
 };

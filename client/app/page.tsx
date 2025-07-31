@@ -1,63 +1,38 @@
 'use client';
 
-import React, {useEffect} from "react";
-import {useRouter} from "next/navigation";
+import React, {useEffect, useState} from "react";
+import { useRouter} from "next/navigation";
 import Navbar98 from "@/components/Navbar98";
 import Window98 from "@/components/Window98";
-import {logout} from "@/handlers/auth-hdlr";
 import {pinnedFetch} from "@/cryptography/certificate";
-
-
-const parseJWT = (t: string) => {
-    try {
-        const b64 = t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-        return JSON.parse(atob(b64));
-    } catch {
-        return null;
-    }
-};
+import { assertAuthAndContext } from "@/utils/guard-util";
 
 const HomePage = () => {
     const router = useRouter();
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
 
     useEffect(() => {
         (async () => {
             try {
-                const token = localStorage.getItem('token');
-                if (!token) return;
-
-                const p = parseJWT(token);
-                if (!p || (p.exp && p.exp * 1000 < Date.now())) {
-                    await logout();
-                    router.push('/');
-                    return;
-                }
-
-                const response = await pinnedFetch('/api/user/current', {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-
-                if (response.ok) {
-                    router.push('/home');
-                } else {
-                    await logout();
-                    router.push('/');
+                const result = await assertAuthAndContext(router);
+                if (result.ok) {
+                    setIsAuthenticated(true);
+                    const userData = result.user;
+                    router.push(userData.isTrustedUser ? '/home-trust' : '/home');
                 }
             } catch (error) {
                 console.error('Error verifying authentication:', error);
-                await logout();
-                router.push('/');
+                setIsAuthenticated(false);
             }
         })();
-    }, []);
-
+    }, [router]);
 
     return (
         <>
-            <Navbar98/>
+            {isAuthenticated && <Navbar98 />}
             <main style={{display: "flex", justifyContent: "center", marginTop: 40}}>
                 <Window98 title="Welcome to SEC CAM" width={320}>
-                    <p>You must login or register.</p>
+                    <p>You must login or register. Change <a href="/passport">password</a> instead?</p>
                     <div style={{display: "flex", gap: 8, justifyContent: "center"}}>
                         <button onClick={() => router.push("/login")}>Login</button>
                         <button onClick={() => router.push("/register")}>Register</button>
