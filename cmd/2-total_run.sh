@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# This script builds and launches the entire application stack in a secure way, then performs an end-to-end TLS health check.
+# It ensures Docker Buildx is set up (initializing a dedicated builder if needed), then uses Docker Compose to rebuild images and start all services (frontend, backend, database, CA, etc.).
+# After bringing up the stack, the script runs a series of tests to validate that the PKI and TLS configuration are correct: it prints out certificate details, performs an HTTPS handshake to the backend, and exercises a test call to the Mailpit service – all using the freshly generated root CA to confirm trust.
+
 set -euo pipefail
 
 function say() { echo -e "\033[32m$*\033[0m"; }
@@ -92,6 +96,11 @@ docker exec step-ca sh -c '
   done
   rm -f /tmp/cert*.pem
 '
+# After starting the containers, the script inspects the certificates to ensure everything is in order.
+# It uses OpenSSL and the Smallstep CLI inside the CA container to print the issuer and subject of the root certificate and to inspect the server's full certificate chain.
+# Then it uses `curl` with the root CA pinned to perform an actual HTTPS request to the backend (https://localhost:3443) – this simulates a client connecting and will fail if the certificate is invalid, not trusted, or if anything less than TLS 1.3 with strong cipher is presented.
+# It also sends a test email via Mailpit’s REST API over HTTPS.
+# All these checks happen automatically, and if any step fails (bad cert, handshake issue, etc.), the script will output an error, indicating the stack is not securely configured. If everything passes (green lines in output), the operator knows the app is running with proper TLS and PKI.
 
 say "👉  Inspecting TLS handshake:"
 sleep 2

@@ -1,6 +1,9 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+// Provides all browser-side AES-256-GCM encryption, decryption, and key generation utilities. We derive a 256-bit AES key from a user’s password using PBKDF2 (250k SHA-256 iterations) to encrypt the user’s “crypto passport” JSON. Every encryption uses a fresh 12-byte random IV, and the output package includes the salt, IV, and ciphertext. This ensures each encrypted blob (like credentials or video chunks) is uniquely protected with strong cryptography on the client side.
+
 import {arrayBufferToBase64, base64ToArrayBuffer} from './asymmetric';
 
 export async function reEncryptCryptoPassport(fileOrObject, currentPasswordOrNull, newPassword) {
@@ -15,6 +18,8 @@ export async function reEncryptCryptoPassport(fileOrObject, currentPasswordOrNul
 
     return await encryptCryptoPassportRegistration(payload, newPassword);
 }
+
+// When a user registers, we encrypt their sensitive data (credentials) with AES-GCM. Here we derive a key from the provided password (using PBKDF2 with a random salt) and then encrypt the JSON payload. The result is packed into a JSON blob (containing salt, iv, ciphertext) which the user downloads as their encrypted “passport”. This ensures only someone with the correct password can later decrypt and retrieve the original data.
 
 export async function encryptCryptoPassportRegistration(json, password) {
     const encoder = new TextEncoder();
@@ -51,6 +56,8 @@ export async function encryptCryptoPassportRegistration(json, password) {
     const blob = new Blob([JSON.stringify(packageObj)], {type: "application/json"});
     return blob;
 }
+
+// Used at login: given the user’s uploaded encrypted passport file and their password, we reverse the process. We parse the JSON, re-derive the AES key using the stored salt, and decrypt the ciphertext (verifying the GCM auth tag internally). If the password is wrong or the file is tampered, decryption fails. On success, we get back the original credentials JSON so the client can use it for authentication.
 
 export async function decryptCryptoPassportLogin(file, password){
     const content = JSON.parse(await file.text());

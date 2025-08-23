@@ -1,4 +1,13 @@
 "use strict";
+/**
+ * Custom Winston logger configuration for SecCam, focusing on log integrity and alerting.
+ * This sets up a logger that writes to both the console and a MongoDB collection via a custom transport.
+ * Each log message is sanitized for sensitive info and given an integrity hash (HMAC) before storage.
+ * The idea is that every log line stored in the database includes a `| HASH: ...` at the end, which is a SHA-256 HMAC of the log content.
+ * This allows detection of log tampering – if someone alters a log message, its hash won’t match.
+ * The logger also works in tandem with `logger-helper.js` to watch for suspicious patterns (like too many errors or too many 404s in a short time) and prints console warnings if thresholds are exceeded.
+ */
+
 
 const crypto = require("crypto");
 const winston = require("winston");
@@ -48,6 +57,15 @@ const safeStringify = obj => {
         return v;
     });
 };
+
+
+/**
+ * Here we define a custom Winston transport (MongoTransport) that writes logs to the MongoDB through our Mongoose model.
+ * Before saving, we call `helper.checkLogEntry(info)` which applies some in-memory rate checks (to detect floods or anomalies) and then construct a Log document.
+ * Each log message is formatted with a timestamp, level, and the message itself – plus we append a HMAC hash of the entire line at the end (the hash is computed with a secret key, making it tamper-evident).
+ * The formatter replaces any sensitive fields (like passwords or tokens) with placeholders before computing the hash.
+ * Finally, the logger is created with this formatter and our custom transport, so that every log saved to the database is integrity-protected and we get immediate alerts on the console if something unusual is happening (like rapid 4xx responses or repeated errors).
+ */
 
 class MongoTransport extends winston.Transport {
     log(info, done) {

@@ -1,6 +1,15 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+/*
+   certificate authority controller – handles signing and verifying certs using step-ca and OpenSSL under the hood
+   signCertificate takes a CSR and uses the smallstep CLI (`step ca sign`) to issue a cert from our CA (auth via env provisioner password)
+   it writes the CSR to a temp file, calls the step CLI, reads back the signed cert, then cleans up – no manual crypto here, we let step-ca do the heavy lifting
+   verifyCertificate uses OpenSSL to check a given PEM cert against our root + intermediate CA chain, ensuring it's valid
+   also extracts the cert's CN via OpenSSL and returns it (so we know which user/device the cert belongs to)
+*/
+
 const fs = require('fs');
 const { execFile, execSync, exec } = require('child_process');
 const util = require('util');

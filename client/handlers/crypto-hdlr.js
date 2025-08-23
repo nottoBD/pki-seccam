@@ -1,6 +1,9 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+// High-level client crypto handler coordinating key management for login, registration, and trust. This module ties together the low-level crypto routines to manage session keys and personal data. It deals with unwrapping shared keys for trusted users, wrapping a normal user’s keys to share with a trusted user, handling decryption of user data after login, and preparing all necessary encrypted payloads during user registration. Essentially, it’s the brain of the front-end security workflow, ensuring that sensitive keys and data are properly encrypted/decrypted at the right times.
+
 import {
     decryptData,
     encryptData,
@@ -30,6 +33,8 @@ import {
 import {setSessionKeys} from "@/utils/session-util";
 
 
+// Used by a trusted user when they log in and need to access a normal user’s video. Given the normal user’s symmetric and HMAC keys wrapped with the trusted user’s public RSA key (as stored on the server), this function uses the trusted user’s RSA private key (JWK) to decrypt those (“unwrap” them). We import the private key for RSA-OAEP decryption and then decrypt each wrapped key. If successful, we end up with the raw symmetric key and HMAC key, which the trusted user can use to decrypt and verify the normal user’s video chunks. If anything goes wrong (e.g., wrong key or corrupted data), we throw an error – the trust relationship can’t be established.
+
 export const unwrapKeysWithPrivateKey = async (wrappedSymmetricKey, wrappedHmacKey, privateKeyJwk) => {
     try {
         if (!privateKeyJwk) throw new Error('No privateKeyJwk provided for unwrap');
@@ -48,6 +53,8 @@ export const unwrapKeysWithPrivateKey = async (wrappedSymmetricKey, wrappedHmacK
     }
 };
 
+
+// Invoked by a normal user who wants to share their videos with a trusted user. We take the normal user’s current session keys (their AES symmetric key and HMAC key, stored in sessionStorage) and encrypt each one with the trusted user’s RSA public key. This uses RSA-OAEP via encryptWithPublicKey, producing Base64-wrapped keys that only the trusted user can decrypt with their private key. We then send these to the backend /api/keywrap endpoint, which will store the relationship. Essentially, this is how a normal user “invites” a trusted user by securely sharing the keys needed to decrypt their content – without ever exposing the raw keys to the server.
 
 export const setTrustForUser = async (trustedUser) => {
     try {
@@ -77,6 +84,9 @@ export const setTrustForUser = async (trustedUser) => {
         throw new Error('Error setting trust.');
     }
 };
+
+
+// Called after a successful login to initialize the client-side crypto context. We receive user_data from the server (which includes encrypted keys and possibly encrypted email, depending on user type) and an in-memory crypto package (the user’s private RSA key, loaded from their crypto passport). If the logged-in user is a trusted user, we delegate to handleTrustedUserSession for the more complex decryption flow. For a normal user, we proceed to decrypt their stored symmetric key and HMAC key using their RSA private key (these keys were originally encrypted with their own public key at registration and stored server-side). Once we recover the keys, we save them in session storage for easy use. We then use the symmetric key to decrypt the user’s email (which the server only ever stored encrypted). This whole process ensures the server never sees sensitive data like plaintext emails or raw keys – all that decryption happens here on the client, using the user’s private key from their crypto package.
 
 export const handleAnyUserSession = async (user_data, inMemoryPackage = null, onError = (msg) => {
 }) => {
@@ -132,6 +142,9 @@ export const handleAnyUserSession = async (user_data, inMemoryPackage = null, on
         throw Error('Unable to decrypt data.');
     }
 };
+
+
+// Similar to the above but for trusted users, who have more sensitive fields. After a trusted user logs in, we use their private RSA key to decrypt their personal symmetric and HMAC keys (which were encrypted with their own public key and stored in the TrustedUser record). With those keys, we verify the integrity of core fields like username, email, and fullname using HMACs that the server provided – if any of these HMAC checks fail, something’s wrong and we abort (this ensures none of the user’s PII was tampered with in storage). Once integrity checks pass, we decrypt the actual email and fullname with the symmetric key, and do the same for optional fields like organization and country if they exist. Finally, we stash the symmetric and HMAC keys in session storage for later, and return the decrypted profile info. The result is that even as a trusted user (with more data), all your personal details remain encrypted on the server and are only decrypted here in the browser after verifying nothing was altered.
 
 export const handleTrustedUserSession = async (userData, decryptedPackage) => {
     try {
@@ -227,6 +240,9 @@ export const handleTrustedUserSession = async (userData, decryptedPackage) => {
         throw new Error('Unable to decrypt data.');
     }
 };
+
+
+// Prepares all necessary cryptographic material when a new user registers. We generate a fresh RSA key pair for the user (the private part will be saved in the user’s browser as their “crypto package”). If the user is signing up as a trusted user (has fullname, org, etc.), we also create a CSR for their user certificate (trustedUserCsr) using that RSA key, and even generate a separate RSA key pair/CSR for their organization (to issue an org certificate). Next, we generate a random AES symmetric key and an HMAC key – these will secure the user’s personal data. We encrypt the user’s email with the symmetric key (AES-GCM) and compute an HMAC for it, so the server never sees the plaintext email. We then encrypt both the symmetric key and HMAC key with the user’s RSA public key (so only the user’s corresponding private key can recover them). All these pieces – encrypted keys, encrypted email, HMACs, public key, etc. – are bundled into a payload object and sent to the server as part of registration. The server will store those encrypted values but can’t read them. Meanwhile, we package up the user’s private key (and org’s private key if applicable) into userPackage/orgPackage so the client can keep them (e.g., prompting the user to download their crypto package file). In short, this function ensures a new user’s sensitive info and keys are locked down with encryption from the very start of account creation.
 
 export const handleRegistration = async (userData) => {
     try {

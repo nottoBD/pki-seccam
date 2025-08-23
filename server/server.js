@@ -1,6 +1,16 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+/*
+   main express backend setup (HTTPS on port 8888)
+   loads the TLS cert and key from /tls (mounted via Docker) and creates an https server wrapping the Express app
+   connects to MongoDB, and mounts Swagger UI at /api-docs for interactive API docs
+   global middlewares: CORS locked down to localhost, JSON parser, cookie parser, multer for file uploads, plus sets X-Server-Cert header on responses (for client to pin our server cert)
+   also responds to any HEAD request with 200 (simple health check)
+   mounts all API routes (user, ca, video, keywrap under /api/*) and finally listens on 0.0.0.0:8888
+*/
+
 require('dotenv').config();
 
 const fs = require('fs');

@@ -1,6 +1,13 @@
 #  Copyright (C) 2025 David Botton <david.botton@ulb.be>
 #  This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 #  Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+# compose file orchestrates all pieces: backend, frontend, db, CA, mail server, and reverse proxy
+# everything runs on one network with TLS – we mount certs/keys into each container so each service speaks HTTPS out of the gate
+# dependencies & healthchecks enforce startup order (CA & db up before server, server before client, etc)
+# nginx is the entrypoint on host port 3443 (mapped to container 443), acting as our secure gateway
+# smallstep step-ca provides an internal CA (persisted in a volume), and mailpit handles email via TLS – all wired together here
+
 volumes:
   mongodb_data:
   stepca-data:

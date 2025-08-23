@@ -2,6 +2,8 @@
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
 
+// Client-side RSA key management and conversion helpers. We generate a 2048-bit RSA key pair per user (for digital signatures and RSA-OAEP encryption), and provide utilities to handle formats. This file lets us convert keys to/from PEM, JWK, ArrayBuffer, and Base64, so we can easily import/export keys and use them for encryption or verification as needed in the browser.
+
 export const arrayBufferToBase64 = (buffer) => {
     const bytes = new Uint8Array(buffer);
     let binary = '';
@@ -33,6 +35,8 @@ export const arrayBufferToBase64 = (buffer) => {
       for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
       return bytes.buffer;
   };
+
+// Creates a new RSA key pair for a user’s identity (2048-bit, SHA-256). We export the public key in PEM format (for inclusion in CSRs or sending to the server) and the private key as a JWK (which we’ll keep client-side). By trimming unused fields like alg and key_ops, we ensure the JWK contains only what's necessary. The returned PEM and JWK let us securely register the user’s public key with the backend while keeping the private key for local decryption/signing tasks.
 
 export async function getOrCreateUserKeypair(username) {
     const {publicKey, privateKey: pk} = await crypto.subtle.generateKey(
@@ -66,6 +70,8 @@ export async function getOrCreateUserKeypair(username) {
 
     return {publicKeyPem, privateKey, privateJwk};
 }
+
+// Allows the app to import a private RSA key from various representations. We accept either a JWK object, a binary PKCS#8 (ArrayBuffer), or a PEM string. Depending on useFor, we set up the key for RSA-OAEP decryption or RSASSA-PKCS1-v1_5 signing. For example, when we log in we’ll use this to load the user’s RSA private key (JWK) for decrypting their symmetric keys, whereas for signing operations we’d import it with sign usage. If the format is unsupported or the key is invalid, we throw an error to avoid proceeding with a bad key.
 
 export const importPrivateKey = async (input, useFor = "sign") => {
     try {
@@ -119,6 +125,8 @@ export const importPrivateKey = async (input, useFor = "sign") => {
           throw new Error(`Failed to import private key: ${error.message}`);
         }
   };
+
+// Uses the Web Crypto RSA-OAEP algorithm with a given public key to encrypt data (usually a small secret like a symmetric key or token). We convert the input text to bytes and encrypt it, returning the result as a Base64 string. This is how we wrap a user’s symmetric encryption keys with someone’s RSA public key when establishing trust – the server will store the Base64 ciphertext, and only the holder of the corresponding private key can unwrap it later.
 
 export const encryptWithPublicKey = async (data, publicKey) => {
     const enc = new TextEncoder();

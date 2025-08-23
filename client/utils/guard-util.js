@@ -1,3 +1,10 @@
+/**
+ * Client-side route guard and session validator.
+ * This utility ensures that a user not only has a valid auth token but also the necessary cryptographic context in place (like encryption keys in session or a decrypted private key package) before allowing them to access certain pages.
+ * It provides a `hardLogout` function to clear all session data and keys, and an `assertAuthAndContext` function that is used to protect Next.js pages by redirecting or logging out users who don’t meet the security context requirements.
+ */
+
+
 import { pinnedFetch } from "@/cryptography/certificate";
 import { getSessionKeys, clearSessionKeys } from "@/utils/session-util";
 import { getCryptoPackage, clearCryptoPackage } from "@/utils/transient-util";
@@ -49,6 +56,17 @@ function hasTrustedCryptoPackage() {
         return false;
     }
 }
+
+
+/**
+ * The `assertAuthAndContext` function is called whenever a protected page loads to verify the user’s authentication and cryptographic setup.
+ * It first checks if we have either a normal session (symmetric & HMAC keys for regular users) or a trusted user’s crypto package in memory. If not, it quickly returns `ok: false`.
+ * Next, it calls the backend’s `/api/user/current` endpoint (using a pinned HTTPS request) to ensure the auth cookie is valid and to get the latest user info.
+ * If the backend says the session is invalid, we trigger a hard logout (clearing keys and forcing a redirect to login).
+ * We also enforce context: if a normal user somehow tries to access a trusted-only page or vice versa, we redirect them to the appropriate homepage.
+ * Finally, for a trusted user, we ensure their private key package is still loaded (since without it they cannot decrypt anything); for a normal user, we ensure their symmetric keys are present.
+ * If any of these checks fail, we log the user out; if all checks pass, we return `{ ok: true, user }` to let the page render.
+ */
 
 export async function assertAuthAndContext(router, target = "either") {
     const currentPath = typeof window !== 'undefined' ? window.location.pathname.split('?')[0] : '';

@@ -1,6 +1,14 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+/*
+   spinning up Next.js on a custom HTTPS server (port 3443) so dev runs over TLS
+   we load our TLS key & cert (with optional passphrase) from the /tls volume via env vars
+   Next's request handler takes over for routing, but now everything is wrapped in TLS for a realistic dev environment
+   in production we might rely on nginx or a different setup, but for local development with self-signed certs, this does the job
+*/
+
 const {createServer} = require("https");
 const {parse} = require("url");
 const next = require("next");

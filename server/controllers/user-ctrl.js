@@ -1,6 +1,15 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+/*
+   user controller – handles registration, login, and account management for normal and trusted users
+   registerUser covers both flows: generates a TOTP secret (speakeasy) and QR code for the user’s authenticator app, and sends a verification email with a one-time token link
+   if it's a trusted user, we also call the CA controller to sign their certificates, storing those creds along with extra info (org, fullname, etc.)
+   loginUser checks the submitted OTP code against the stored secret (after decrypting it with our server key); if valid, we mint a JWT and encrypt it into an authToken cookie for the client
+   also includes verifyUserEmail to activate accounts (by matching a hashed token from the email link), and helpers like currentUser/getUserSymmetric to retrieve user info or keys, plus listTrustedUsers for admin use
+*/
+
 require("dotenv").config();
 const crypto = require("crypto");
 const fs = require("fs");
@@ -55,7 +64,7 @@ const getUserSymmetric = async (req, res) => {
 
         return res.json({
             encryptedSymmetricKey: account.encrypted_symmetric_key,
-            encryptedHmacKey: account.encrypted_hmac_key,   // <-- added
+            encryptedHmacKey: account.encrypted_hmac_key,
             username: effectiveUsername,
         });
     } catch (err) {

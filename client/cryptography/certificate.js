@@ -1,6 +1,9 @@
 // Copyright (C) 2025 David Botton <david.botton@ulb.be>
 // This file is part of PKI Seccam <https://github.com/nottoBD/pki-seccam>.
 // Licensed under the WTFPL Version 2. See LICENSE file for details.
+
+// Client-side X.509 certificate handling and pinning logic. We leverage Forge libraries to parse certificates and create Certificate Signing Requests (CSRs), and we implement certificate pinning for the backend’s TLS cert. This means before making sensitive API calls, we verify the server’s SSL certificate fingerprint matches the expected value from our environment – aborting the request if there’s a mismatch (to prevent man-in-the-middle attacks).
+
 import * as forge from 'node-forge';
 import {getOrCreateUserKeypair, importPublicKey} from './asymmetric';
 
@@ -16,6 +19,8 @@ function firstCertificatePem(pem) {
     if (!match) throw new Error('No X.509 certificate block found.');
     return match[0];
 }
+
+// Helper to extract the public key from an X.509 certificate chain. We parse the first certificate (leaf) in the provided PEM chain and return its public key as a PEM string. This ensures that when we receive a trusted user’s certificate, we can pull out their RSA public key easily (for example, to verify signatures or encrypt data for them).
 
  export function publicKeyPemFromCertificate(pemChain) {
      const leafPem = firstCertificatePem(pemChain);
@@ -35,6 +40,8 @@ export async function importPublicKeyFromCertificate(certPem, useFor = 'encrypt'
 const pinnedFingerprint =
     (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT) ||
     '';
+
+// Generates a new RSA key pair and constructs a CSR for a user. We use Forge to create a certification request with the username as the Common Name. The CSR’s data (SubjectPublicKeyInfo) is then signed using the generated private key via the Web Crypto API (RSASSA-PKCS1-v1_5 with SHA-256). The resulting CSR PEM, along with the user’s public key and private key JWK, will be sent to the server’s CA for signing. Essentially, this prepares the cryptographic identity for a trusted user during registration without exposing their private key.
 
 export async function buildUserCSR(username) {
     const {publicKeyPem, privateKey, privateJwk} = await getOrCreateUserKeypair(username);
@@ -98,6 +105,7 @@ export async function buildOrganizationCSR(fullname, organization, country) {
     return {csrPem, publicKeyPem, privateJwk};
 }
 
+// Custom fetch wrapper that enforces TLS certificate pinning. Before performing the actual fetch, we call verifyPinnedCertificate for the target path. That function makes a HEAD request to retrieve the server’s certificate (via a custom X-Server-Cert header), computes its SHA-256 fingerprint, and compares it against our known good fingerprint (NEXT_PUBLIC_BACKEND_CERT_FINGERPRINT). If the fingerprints don’t match, we throw an error to block the request – this means the server’s certificate isn’t the one we expect (could indicate a MITM or misconfiguration). Only if the check passes do we proceed with the real fetch call. We also cache a successful check for a short period to avoid repeating the heavy operation on every request.
 
 export async function pinnedFetch(path, options = {}) {
     const ok = await verifyPinnedCertificate(path);

@@ -1,3 +1,5 @@
+// Express routes for video streaming and management endpoints. This sets up the API paths under /api/video for listing videos, retrieving video chunks, uploading new video data, etc., and delegates the heavy lifting to the video controller. We define routes for a trusted user to list videos they have access to (GET /trustedList), for a normal user to list their own videos (GET /list), to fetch the encrypted chunks of a specific video (GET /:name/:username/chunks), to delete a video (DELETE /:name), and to upload new encrypted video chunks (POST /streaming). Each of these calls the appropriate controller function. Note: Authentication isn’t explicitly declared here, but these endpoints expect a valid auth token cookie; the controller will internally verify the token and user type (trusted vs normal) as needed to enforce access control.
+
 const {Router} = require('express');
 const video = require('../controllers/video-ctrl');
 
