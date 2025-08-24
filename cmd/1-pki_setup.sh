@@ -20,6 +20,8 @@ export LEAFS_DIR="$PKI_DIR/leafs"
 export ROOTS_DIR="$PKI_DIR/roots"
 mkdir -p "$LEAFS_DIR/server" "$LEAFS_DIR/client" "$LEAFS_DIR/mailpit" "$ROOTS_DIR" "$LEAFS_DIR/browser" "$ROOTS_DIR"
 
+sleep 2
+
 # 1) Fresh password
 ################################################################################
 if [[ -f .step-ca-password ]]; then
@@ -29,7 +31,7 @@ else
     echo -n "$CA_PASSWORD" > .step-ca-password
     chmod 600 .step-ca-password
 fi
-
+sleep 2
 docker buildx use seccam-builder
 
 # 2) Launch new CA
@@ -37,7 +39,7 @@ docker buildx use seccam-builder
 docker rm -f step-ca step-ca-bootstrap 2>/dev/null || true
 docker volume rm -f stepca-data        2>/dev/null || true
 docker volume create stepca-data
-
+sleep 5
 docker run -d --name step-ca \
   -v stepca-data:/home/step \
   -e DOCKER_STEPCA_INIT_NAME="SecCam-SSD/CA" \
@@ -49,16 +51,16 @@ docker run -d --name step-ca \
   -e DOCKER_STEPCA_INIT_SIZE="2048" \
   -p 9000-9001:9000-9001 \
   smallstep/step-ca:0.28.4
-
+sleep 6
 # wait for root ca max 20"
 for _ in {1..20}; do
   docker exec step-ca test -f /home/step/certs/root_ca.crt && break
   sleep 1
 done
-
+sleep 15
 # sync password file, then persist it to .env and shred the temp file
-docker exec step-ca sh -c "echo $CA_PASSWORD > /home/step/secrets/password"
-
+docker exec step-ca sh -c "echo -n $CA_PASSWORD > /home/step/secrets/password"
+sleep 5
 ENV_FILE="$PROJECT_ROOT/.env"; touch "$ENV_FILE"
 if grep -q '^STEP_CA_PASSWORD=' "$ENV_FILE"; then
   sed -i.bak "s|^STEP_CA_PASSWORD=.*|STEP_CA_PASSWORD=$CA_PASSWORD|" "$ENV_FILE"
@@ -68,7 +70,7 @@ fi
 say "🔑  STEP_CA_PASSWORD stored in $(basename "$ENV_FILE")"
 # securely delete the temporary password file
 shred -u .step-ca-password
-
+sleep 5
 # 3) Provisioner
 ################################################################################
 docker exec step-ca step ca provisioner add seccam-provisioner \
@@ -76,36 +78,43 @@ docker exec step-ca step ca provisioner add seccam-provisioner \
   --password-file /home/step/secrets/password 2>/dev/null || true
 
 # reload
-docker exec step-ca kill -HUP 1 && sleep 1
+docker exec step-ca kill -HUP 1
+
+# Wait for the provisioner to be available
+for _ in {1..10}; do
+  if docker exec step-ca step ca provisioner list | grep -q "seccam-provisioner"; then
+    break
+  fi
+  sleep 1
+done
 
 # 4) Leaf certs
 ################################################################################
-docker exec step-ca bash -c '
+docker exec step-ca bash -c "
   set -e
   mkdir -p /home/step/leaf
-  export STEP_CA_URL=https://localhost:9000
-  export STEP_ROOT=/home/step/certs/root_ca.crt
   export STEP_PASSWORD_FILE=/home/step/secrets/password
 
   for name in server client mailpit; do
-    step ca certificate ${name}.seccam.internal \
-      /home/step/leaf/${name}.crt \
-      /home/step/leaf/${name}.key \
-      --provisioner seccam-provisioner --password-file $STEP_PASSWORD_FILE \
-      --san ${name}.seccam.internal \
-      --san $name \
+    step ca certificate \${name}.seccam.internal \
+      /home/step/leaf/\${name}.crt \
+      /home/step/leaf/\${name}.key \
+      --provisioner seccam-provisioner --password-file \$STEP_PASSWORD_FILE \
+      --san \${name}.seccam.internal \
+      --san \$name \
       --san localhost --san 127.0.0.1 --san ::1 \
       --not-after 8760h \
       --kty RSA --size 2048
-done'
+  done"
 
 # 5) Build full chains
 ################################################################################
-docker exec step-ca bash -c '
-INT=/home/step/certs/intermediate_ca.crt
-for name in server client mailpit; do
-  cat /home/step/leaf/${name}.crt "$INT" > /home/step/leaf/${name}.fullchain.crt
-done'
+docker exec step-ca bash -c "
+  set -e
+  INT=/home/step/certs/intermediate_ca.crt
+  for name in server client mailpit; do
+    cat /home/step/leaf/\${name}.crt \"\$INT\" > /home/step/leaf/\${name}.fullchain.crt
+  done"
 
 docker cp step-ca:/home/step/certs/root_ca.crt         "$ROOTS_DIR/step-root.pem"
 docker cp step-ca:/home/step/certs/intermediate_ca.crt "$ROOTS_DIR/intermediate_ca.crt"

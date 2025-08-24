@@ -34,12 +34,14 @@ Computer Project for the course `INFO-Y115 - Secure Software Design & Web Securi
   </tr>
 </table>
 
-*For the complete Developer Documentation and Project Report, please refer to that [`Document`](doc/info-y115_report_seccam_botton.pdf).*
+*For the complete Developer Documentation and Project Report, please refer to that [`Document`](doc/mission_report-ULB615056.pdf).*
 
 
 ## ii. System Prerequisites
 
 This repository is functional under any LTS or rolling-release Linux distribution. Final tests were conducted on Ubuntu 22LTS in a VirtualBox VM.
+
+NB: Setup scripts have variable outcomes if slow systems/inside a VM; make sure to increase RAM and CPU to be confortable, run the setup pipeline multiple times if needed. (sleep times were added to compensate).. 
 
 ```bash
 node --version   #SHOULD return v22
@@ -125,7 +127,7 @@ Boots the stack using hard-TLS authentication: it re-builds all images with a sp
 ## a. Dependencies
 For the *apt package manager* under *systemd*, run the following commands:
 ```bash
-sudo apt update
+sudo apt update && sudo apt upgrade
 sudo apt install -y ca-certificates curl gnupg lsb-release nodejs
 sudo install -m0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -154,8 +156,8 @@ su - ubuntu
 ---
 
 ## b. Troubleshooting
-> ### IF: using a rolling-release Linux distribution script [`cmd/2-total_run.sh`](cmd/2-total_run.sh) fails
-You need to revert to an earlier version of Node.js using NVM.
+> ### IF: nvm outdated or script [`cmd/2-total_run.sh`](cmd/2-total_run.sh) fails during execution
+You need to revert to the correct version of Node.js using NVM.
 ```bash
 mkdir ~/.nvm
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
